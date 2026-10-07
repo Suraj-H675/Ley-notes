@@ -30,7 +30,8 @@ Canonical retained history and human decisions must survive rebuilding derived k
 
 ## Current implementation foundation
 
-The implementation at the M0 branch point still reflects the preceding focused-continuity product.
+The runtime still contains the preceding focused-continuity product, but M1 now adds the first Project Brain
+persistence foundation alongside it. The final Desktop/import/retrieval experience is not implemented yet.
 
 ### Product surfaces
 
@@ -55,7 +56,17 @@ The future sparse Desktop IA is not implemented yet.
 ### Current durable state
 
 Current canonical machine-managed continuity uses one owner-private SQLite database (`continuity.sqlite3`,
-schema v11 at M0), partitioned by stable project ID. Important structures include:
+schema v12 after M1), partitioned by stable project ID. The pre-M1 structures remain for transition compatibility;
+M1 adds:
+
+- durable Project lifecycle generation/tombstones independent of live Project rows;
+- path-independent Project Brain creation/list/open;
+- one logical repository attachment plus explicit working-copy locators;
+- Sources, retained SourceVersions, Source locators, and version/evidence links;
+- Project Sessions while reusing the existing immutable event ledger for observable Episodes, SourceVersion
+  occurrences, and exact reviewed human-action history.
+
+Existing transition structures still include:
 
 - projects;
 - append-only/versioned events;
@@ -71,7 +82,9 @@ The store already provides valuable production properties including transactions
 foreign-key/project qualification, ordering guards, private filesystem permissions, locking, bounded payloads,
 WAL, and full synchronous writes in the current implementation.
 
-These are foundations for M1, not a requirement to keep the existing schema shape.
+M1 deliberately reuses the proven SQLite/event/CAS primitives instead of introducing a second persistence engine.
+Candidate Entities/Assertions, summaries, embeddings, analysis jobs, and graph projections remain deferred derived
+state rather than being prematurely frozen into schema v12.
 
 ### Current repo-local state
 
@@ -91,14 +104,18 @@ Current native ingestion already supports bounded/redacted capture, ignore rules
 hashes, optional retained text/media evidence, and captured Git metadata. It does not build a new native code
 graph by default.
 
-Artifact snapshots are a useful precursor to SourceVersions but do not yet satisfy the new model:
+Artifact snapshots remain a transition capture system. M1 adds a separate Project Brain Source/SourceVersion model
+without pretending path-keyed artifact snapshots are stable Source identity:
 
-- Source identity and path/locator identity are not separate;
-- capture occurrence is not a first-class domain concept;
-- retention currently favors current/cited snapshots rather than all intentionally retained Brain Sources;
-- redacted retained content must be distinguished from exact original bytes.
+- Source identity and path/locator identity are now separate in the Project Brain substrate;
+- a retained SourceVersion stores exact retained representation bytes in the private content-addressed store plus
+  transformation/original-hash metadata;
+- repeated observation of the same retained representation can reuse a SourceVersion while recording a distinct
+  occurrence event;
+- legacy artifact retention still favors current/cited snapshots and remains a compatibility concern.
 
-M2 owns that implementation change after M1 establishes identity/persistence.
+M2 owns deterministic project/source import and migration of live capture into these canonical SourceVersion
+semantics; M1 does not claim the old ingestion path has already become the new import flow.
 
 ### Current Sessions and Learnings
 
@@ -144,9 +161,9 @@ Codex and Claude integration already has strong reusable work:
 The future Chronicle may capture more supported observations, but it must remain adapter/version aware and expose
 gaps rather than promise complete transcripts or hidden reasoning.
 
-## Target domain/persistence boundaries
+## M1 domain/persistence boundaries
 
-M1 must implement the smallest coherent model that can represent these without another identity reset:
+M1 implements the smallest coherent canonical model needed to continue without another identity reset:
 
 ### Project
 
@@ -155,8 +172,9 @@ Stable private logical Brain, able to exist with no live repository.
 ### Working-copy/repository attachment
 
 The initial product allows zero or one logical code-repository attachment per Project. That repository can have
-multiple explicitly authorized machine-local working-copy/worktree locators, each with independent locator/revision
-identity and authorization state. Multiple-copy/worktree conflicts must fail closed or require explicit resolution;
+multiple explicitly authorized machine-local working-copy/worktree locators, each with independent locator identity
+and authorization state. M1 reserves revision-observation fields but does not yet populate them; deterministic M2
+import owns that observation flow. Multiple-copy/worktree conflicts fail closed or require explicit resolution;
 copied markers are not grants. Multi-repository Projects are deferred.
 
 ### Source
@@ -175,7 +193,9 @@ and omissions.
 ### Session and Episode
 
 Session identifies a host work session. Episode is one supported observable occurrence. Inferred semantic grouping
-is derived rather than fabricated as canonical chronology.
+is derived rather than fabricated as canonical chronology. M1 intentionally reuses the existing project-qualified,
+idempotent event ledger as the Episode/capture-occurrence/human-action history instead of adding parallel append-only
+tables.
 
 ### Evidence reference
 
@@ -191,7 +211,27 @@ authority.
 ### Derived knowledge
 
 Entities, unreviewed Assertions, inferred relationships, summaries, retrieval indexes, embeddings, and graph
-layout remain rebuildable unless an exact version became the target of a durable human decision.
+layout remain rebuildable unless an exact version became the target of a durable human decision. M1 does not add
+these tables yet; absence is the canonical/derived boundary rather than speculative schema.
+
+### Lifecycle and deletion fence
+
+Every Project has a durable lifecycle generation. Destructive/revocation operations advance the generation so a
+new Project Brain write carrying an older handle fails rather than silently committing. Whole-Brain erase moves the
+Project to `erasing` in SQLite and removes project-owned database state before filesystem cleanup. Cleanup is
+retryable across restart, and the terminal tombstone survives to stop legacy registration/events/catalog writes
+from recreating the erased ID.
+
+Source and Session erasure retain only scrubbed identity tombstones and reject later event reuse of those erased
+identities. Remove-from-active-use remains distinct from erasure.
+
+### Portability boundary after M1
+
+Portable continuity v1 predates Project Brain SourceVersions. M1 therefore fails export closed when a Project has
+retained SourceVersions instead of silently producing an incomplete backup. For projects that remain representable
+by v1, export strips machine-local project/working-copy/source locators, unrelated lifecycle rows, and active egress
+permission, while keeping the existing bundle compatibility behavior. A complete Project Brain portable format is
+still a later milestone.
 
 ## Applicability model
 

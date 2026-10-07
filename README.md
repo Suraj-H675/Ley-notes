@@ -12,8 +12,9 @@ Existing ADRs and older research remain useful implementation history, but they 
 requirements.
 
 > **Migration status:** the repository still implements the preceding focused-continuity runtime while the
-> Project Brain milestones are being built. This README distinguishes the target product from behavior that
-> already ships; it does not claim the new Desktop IA or Brain data model is finished yet.
+> Project Brain milestones are being built. M1 has now established the path-independent Brain identity/persistence
+> foundation in `ley-core` (schema v12), but deterministic import, final agent workflow, derived knowledge, and the
+> new Desktop IA are later milestones. This README does not claim those later surfaces already ship.
 
 ## Product surfaces
 
@@ -54,6 +55,8 @@ graph-demo homepage.
 Today the implementation still exposes the focused continuity foundation that the Project Brain will build on:
 
 - owner-private transactional SQLite continuity state;
+- path-independent Project Brain creation with durable lifecycle generations/tombstones;
+- explicit repository/working-copy, Source/SourceVersion, Session/Episode, and human-action persistence foundations;
 - bounded/redacted project capture and exact retained-evidence citations;
 - revision/applicability evidence;
 - project/session erasure and egress controls;

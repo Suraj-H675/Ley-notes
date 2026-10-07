@@ -105,8 +105,10 @@ pub fn export_portable_continuity_from_evidence_root(
     destination: impl AsRef<Path>,
 ) -> Result<PortableContinuityBundleManifest, LeyCoreError> {
     let evidence_root = evidence_root.as_ref();
-    export_portable_with_evidence(store, project_id, destination.as_ref(), |citations| {
-        read_artifact_snapshots_from_evidence_root(evidence_root, project_id, citations)
+    store.with_artifact_authority_lock(|| {
+        export_portable_with_evidence(store, project_id, destination.as_ref(), |citations| {
+            read_artifact_snapshots_from_evidence_root(evidence_root, project_id, citations)
+        })
     })
 }
 
@@ -1546,6 +1548,15 @@ mod tests {
                  DROP TABLE project_artifact_state;
                  DROP TABLE artifact_files;
                  DROP TABLE artifact_snapshots;
+                 DROP TABLE event_source_version_links;
+                 DROP TABLE source_locators;
+                 DROP TABLE source_versions;
+                 DROP TABLE project_sources;
+                 DROP TABLE working_copy_locators;
+                 DROP TABLE project_repositories;
+                 DROP TABLE project_sessions;
+                 DROP TRIGGER projects_reject_terminal_lifecycle;
+                 DROP TABLE project_lifecycle;
                  DROP TABLE local_migration_state;
                  DROP TABLE approved_sources;
                  DROP TABLE legacy_approved_source_issues;

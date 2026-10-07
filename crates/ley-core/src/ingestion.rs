@@ -37,6 +37,7 @@ const GRAPH_HISTORY_SCHEMA_VERSION: u32 = 1;
 const GRAPH_HISTORY_LIMIT_BYTES: u64 = 524_288;
 const MAX_GRAPH_HISTORY_ENTRIES: usize = 512;
 const LIFECYCLE_LOCK_SUFFIX: &str = ".lifecycle-v1.lock";
+const ERASED_PROJECT_TOMBSTONE_SUFFIX: &str = ".erased-v1.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -339,21 +340,35 @@ pub fn erase_project_memory(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<ProjectMemoryErasure, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    erase_legacy_project_memory_by_id(vault.as_ref(), &diagnostic.identity.project_id)?;
+    Ok(ProjectMemoryErasure {
+        project_id: diagnostic.identity.project_id,
+        erased: true,
+        project_metadata_preserved: true,
+        binding_preserved: true,
+    })
+}
+
+pub(crate) fn erase_legacy_project_memory_by_id(
+    vault: &Path,
+    project_id: &str,
+) -> Result<bool, LeyCoreError> {
     use cap_fs_ext::DirExt;
 
-    let diagnostic = diagnose_project(project_start)?;
-    let vault_path = vault
-        .as_ref()
-        .canonicalize()
-        .map_err(|source| LeyCoreError::Io {
-            path: vault.as_ref().to_path_buf(),
-            source,
-        })?;
+    validate_project_id(project_id)?;
+    let vault_path = vault.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: vault.to_path_buf(),
+        source,
+    })?;
     if !vault_path.is_dir() {
-        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+        return Err(LeyCoreError::NotDirectory(vault.to_path_buf()));
     }
-    let _lifecycle =
-        lock_project_memory_lifecycle(&vault_path, &diagnostic.identity.project_id, false, true)?;
+    let _lifecycle = match lock_project_memory_lifecycle(&vault_path, project_id, false, true) {
+        Ok(lock) => lock,
+        Err(LeyCoreError::ProjectMemoryUnavailable(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
     let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
         LeyCoreError::Io {
             path: vault_path.clone(),
@@ -382,23 +397,93 @@ pub fn erase_project_memory(
             source,
         })?;
     projects_dir
-        .open_dir_nofollow(&diagnostic.identity.project_id)
+        .open_dir_nofollow(project_id)
         .map_err(|source| LeyCoreError::Io {
-            path: PathBuf::from(&diagnostic.identity.project_id),
+            path: PathBuf::from(project_id),
             source,
         })?;
     projects_dir
-        .remove_dir_all(&diagnostic.identity.project_id)
+        .remove_dir_all(project_id)
         .map_err(|source| LeyCoreError::Io {
-            path: PathBuf::from(&diagnostic.identity.project_id),
+            path: PathBuf::from(project_id),
             source,
         })?;
-    Ok(ProjectMemoryErasure {
-        project_id: diagnostic.identity.project_id,
-        erased: true,
-        project_metadata_preserved: true,
-        binding_preserved: true,
-    })
+    Ok(true)
+}
+
+pub(crate) fn erase_legacy_project_memory_by_id_terminal(
+    vault: &Path,
+    project_id: &str,
+) -> Result<bool, LeyCoreError> {
+    use cap_fs_ext::DirExt;
+
+    validate_project_id(project_id)?;
+    let vault_path = vault.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: vault.to_path_buf(),
+        source,
+    })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.to_path_buf()));
+    }
+    let _lifecycle = lock_project_memory_lifecycle(&vault_path, project_id, true, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let ley_dir = vault_dir
+        .open_dir_nofollow(STORE_ROOT)
+        .map_err(|source| LeyCoreError::Io {
+            path: vault_path.join(STORE_ROOT),
+            source,
+        })?;
+    let memory_dir = ley_dir
+        .open_dir_nofollow(AGENT_MEMORY_DIRECTORY)
+        .map_err(|source| LeyCoreError::Io {
+            path: vault_path.join(STORE_ROOT).join(AGENT_MEMORY_DIRECTORY),
+            source,
+        })?;
+    let projects_dir = memory_dir
+        .open_dir_nofollow(PROJECTS_DIRECTORY)
+        .map_err(|source| LeyCoreError::Io {
+            path: vault_path
+                .join(STORE_ROOT)
+                .join(AGENT_MEMORY_DIRECTORY)
+                .join(PROJECTS_DIRECTORY),
+            source,
+        })?;
+    let tombstone_name = legacy_erasure_tombstone_name(project_id);
+    let tombstone = serde_json::to_vec(&serde_json::json!({
+        "version": 1,
+        "projectId": project_id,
+    }))
+    .map_err(|error| {
+        LeyCoreError::InvalidArtifactStore(format!(
+            "legacy project erasure tombstone could not be serialized: {error}"
+        ))
+    })?;
+    write_atomic_private(&projects_dir, &tombstone_name, &tombstone)?;
+
+    let removed = match projects_dir.open_dir_nofollow(project_id) {
+        Ok(_) => {
+            projects_dir
+                .remove_dir_all(project_id)
+                .map_err(|source| LeyCoreError::Io {
+                    path: PathBuf::from(project_id),
+                    source,
+                })?;
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: PathBuf::from(project_id),
+                source,
+            })
+        }
+    };
+    Ok(removed)
 }
 
 pub fn erase_project_memory_with_continuity_transition(
@@ -410,11 +495,11 @@ pub fn erase_project_memory_with_continuity_transition(
     let vault = vault.as_ref();
     let diagnostic = diagnose_project(project_start)?;
     let project_id = diagnostic.identity.project_id.clone();
-    match erase_project_memory(project_start, vault) {
-        Ok(_) | Err(LeyCoreError::ProjectMemoryUnavailable(_)) => {}
-        Err(error) => return Err(error),
-    }
-    store.erase_project(&project_id)?;
+    let vault_path = vault.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: vault.to_path_buf(),
+        source,
+    })?;
+    store.erase_project_with_legacy_cleanup(&project_id, &vault_path)?;
     Ok(ProjectMemoryErasure {
         project_id,
         erased: true,
@@ -429,6 +514,19 @@ pub fn erase_project_memory_with_native_authority(
 ) -> Result<ProjectMemoryErasure, LeyCoreError> {
     let diagnostic = diagnose_project(project_start)?;
     let project_id = diagnostic.identity.project_id.clone();
+    match store.open_project_brain(&project_id) {
+        Err(LeyCoreError::ProjectErasing { .. }) | Err(LeyCoreError::ProjectErased { .. }) => {
+            store.erase_project(&project_id)?;
+            return Ok(ProjectMemoryErasure {
+                project_id,
+                erased: true,
+                project_metadata_preserved: true,
+                binding_preserved: false,
+            });
+        }
+        Ok(_) => {}
+        Err(error) => return Err(error),
+    }
     match store.artifact_write_authority_origin(&project_id)? {
         Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn) => {}
         Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover) => {
@@ -545,6 +643,29 @@ pub(crate) fn lock_project_memory_lifecycle(
             })?;
     }
     Ok(ProjectMemoryLifecycleLock { file })
+}
+
+fn legacy_erasure_tombstone_name(project_id: &str) -> String {
+    format!("{project_id}{ERASED_PROJECT_TOMBSTONE_SUFFIX}")
+}
+
+fn reject_legacy_erased_project(projects_dir: &Dir, project_id: &str) -> Result<(), LeyCoreError> {
+    let name = legacy_erasure_tombstone_name(project_id);
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    match projects_dir.open_with(&name, &options) {
+        Ok(file) => {
+            ensure_private_file_permissions(&file, &name)?;
+            Err(LeyCoreError::ProjectErased {
+                project_id: project_id.to_owned(),
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(LeyCoreError::Io {
+            path: PathBuf::from(name),
+            source,
+        }),
+    }
 }
 
 fn legacy_artifact_write_fence_state(
@@ -1676,6 +1797,7 @@ impl ArtifactStore {
         let ley_dir = open_or_create_private_dir(&vault_dir, STORE_ROOT, vault)?;
         let memory_dir = open_or_create_private_dir(&ley_dir, AGENT_MEMORY_DIRECTORY, vault)?;
         let projects_dir = open_or_create_private_dir(&memory_dir, PROJECTS_DIRECTORY, vault)?;
+        reject_legacy_erased_project(&projects_dir, project_id)?;
         let project_dir = open_or_create_private_dir(&projects_dir, project_id, vault)?;
         let artifacts_dir = open_or_create_private_dir(&project_dir, ARTIFACTS_DIRECTORY, vault)?;
         let content_dir = open_or_create_private_dir(&artifacts_dir, CONTENT_DIRECTORY, vault)?;

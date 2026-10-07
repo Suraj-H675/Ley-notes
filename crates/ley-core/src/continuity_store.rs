@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const CONTINUITY_DATABASE_FILE: &str = "continuity.sqlite3";
-pub const CONTINUITY_SCHEMA_VERSION: u32 = 11;
+pub const CONTINUITY_SCHEMA_VERSION: u32 = 12;
 pub const CONTINUITY_EVENT_LIMIT_BYTES: usize = 1_048_576;
 const CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES: usize = 1_048_576;
 const CONTINUITY_EGRESS_AUTHORITY_LOCK_FILE: &str = "continuity-egress.lock";
@@ -1707,6 +1707,10 @@ impl ContinuityStore {
         bytes: &[u8],
     ) -> Result<(), LeyCoreError> {
         validate_project_id(project_id)?;
+        {
+            let connection = self.open_connection()?;
+            crate::project_brain::ensure_project_not_terminal_on(&connection, project_id, self)?;
+        }
         let digest = artifact_digest(content_hash)?;
         if bytes.len() as u64 != expected_bytes
             || format!("sha256:{:x}", Sha256::digest(bytes)) != content_hash
@@ -1722,6 +1726,24 @@ impl ContinuityStore {
         let destination = project_dir.join(digest);
         write_immutable_private_blob(&project_dir, &destination, bytes)?;
         Ok(())
+    }
+
+    pub(crate) fn read_project_brain_blob(
+        &self,
+        project_id: &str,
+        content_hash: &str,
+        expected_bytes: u64,
+    ) -> Result<Vec<u8>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let digest = artifact_digest(content_hash)?;
+        let path = self.artifact_project_content_dir(project_id)?.join(digest);
+        let bytes = read_private_blob(&path, expected_bytes)?;
+        if format!("sha256:{:x}", Sha256::digest(&bytes)) != content_hash {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "Project Brain blob failed hash verification: {content_hash}"
+            )));
+        }
+        Ok(bytes)
     }
 
     pub(crate) fn read_native_portable_artifact_snapshots(
@@ -2594,6 +2616,30 @@ impl ContinuityStore {
 
         let mut retained_snapshots = BTreeSet::new();
         let mut required_blobs = BTreeMap::<String, u64>::new();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT content_hash, stored_bytes
+                     FROM source_versions
+                     WHERE project_id = ?1
+                     ORDER BY source_id, source_version_id",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map([project_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|error| self.database_error(error))?;
+            for row in rows {
+                let (content_hash, stored_bytes) =
+                    row.map_err(|error| self.database_error(error))?;
+                record_required_artifact_blob(
+                    &mut required_blobs,
+                    &content_hash,
+                    artifact_i64_to_u64(stored_bytes, "SourceVersion stored bytes")?,
+                )?;
+            }
+        }
         if let Some(snapshot_id) = &current_snapshot {
             retained_snapshots.insert(snapshot_id.clone());
             let mut statement = transaction
@@ -2949,6 +2995,11 @@ impl ContinuityStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| self.database_error(error))?;
+        crate::project_brain::ensure_project_not_terminal_on(
+            &transaction,
+            &observation.project_id,
+            self,
+        )?;
         let root = observation
             .root_path
             .to_str()
@@ -3072,8 +3123,15 @@ impl ContinuityStore {
         &self,
         input: &ContinuityEventInput,
     ) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
-        let connection = self.open_connection()?;
-        append_event_on(&connection, input, &self.path)
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let write = append_event_on(&transaction, input, &self.path)?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(write)
     }
 
     pub(crate) fn append_project_event_if_count(
@@ -3863,16 +3921,416 @@ impl ContinuityStore {
     }
 
     pub fn erase_project(&self, project_id: &str) -> Result<(), LeyCoreError> {
+        self.erase_project_with_cleanup(project_id, "native", None)
+    }
+
+    /// Transitional Desktop operation for the pre-Project-Brain "Agent Memory" surface.
+    ///
+    /// This is deliberately not Project Brain erasure: it keeps the active Project identity and
+    /// path observation so the current Desktop can recapture focused continuity. It fails closed
+    /// if new Project Brain canonical state is present rather than silently deleting that state
+    /// under the legacy reset contract.
+    pub fn reset_agent_memory_for_recapture(&self, project_id: &str) -> Result<(), LeyCoreError> {
         validate_project_id(project_id)?;
         self.with_artifact_authority_lock(|| {
-            self.remove_native_artifact_project_dir(project_id)?;
             let mut connection = self.open_connection()?;
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|error| self.database_error(error))?;
-            transaction
-                .execute("DELETE FROM projects WHERE project_id = ?1", [project_id])
+            let Some(lifecycle) = crate::project_brain::lifecycle_on(&transaction, project_id, self)?
+            else {
+                let project_exists: bool = transaction
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                        [project_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| self.database_error(error))?;
+                if project_exists {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "project {project_id} exists without a lifecycle row"
+                    )));
+                }
+                transaction
+                    .commit()
+                    .map_err(|error| self.database_error(error))?;
+                return Ok(());
+            };
+            match lifecycle.state {
+                crate::project_brain::ProjectLifecycleState::Active => {}
+                crate::project_brain::ProjectLifecycleState::Erasing => {
+                    return Err(LeyCoreError::ProjectErasing {
+                        project_id: project_id.to_owned(),
+                    })
+                }
+                crate::project_brain::ProjectLifecycleState::Erased => {
+                    return Err(LeyCoreError::ProjectErased {
+                        project_id: project_id.to_owned(),
+                    })
+                }
+            }
+
+            let canonical_m1_rows: i64 = transaction
+                .query_row(
+                    "SELECT
+                        (SELECT count(*) FROM project_repositories WHERE project_id = ?1) +
+                        (SELECT count(*) FROM project_sources WHERE project_id = ?1) +
+                        (SELECT count(*) FROM project_sessions WHERE project_id = ?1) +
+                        (SELECT count(*) FROM events
+                         WHERE project_id = ?1
+                           AND kind IN (
+                               'source-version-retained', 'source-created',
+                               'source-locator-attached', 'episode-recorded',
+                               'human-action-recorded'
+                           ))",
+                    [project_id],
+                    |row| row.get(0),
+                )
                 .map_err(|error| self.database_error(error))?;
+            if canonical_m1_rows != 0 {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "the transitional Agent Memory reset cannot erase Project Brain canonical state; use the Project Brain source/session/Brain erasure operations instead"
+                        .to_owned(),
+                ));
+            }
+
+            let next_generation = lifecycle.generation.checked_add(1).ok_or_else(|| {
+                LeyCoreError::InvalidContinuityStore(
+                    "project generation overflow during Agent Memory reset".to_owned(),
+                )
+            })?;
+            let updated_at_unix_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| {
+                    LeyCoreError::InvalidContinuityStore(
+                        "system clock is before the Unix epoch".to_owned(),
+                    )
+                })?
+                .as_millis();
+            let updated_at_unix_ms = i64::try_from(updated_at_unix_ms).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "Agent Memory reset timestamp exceeds SQLite range".to_owned(),
+                )
+            })?;
+            transaction
+                .execute(
+                    "UPDATE project_lifecycle
+                     SET generation = ?1, updated_at_unix_ms = ?2
+                     WHERE project_id = ?3 AND state = 'active' AND generation = ?4",
+                    params![
+                        i64::try_from(next_generation).map_err(|_| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "project generation exceeds SQLite range".to_owned(),
+                            )
+                        })?,
+                        updated_at_unix_ms,
+                        project_id,
+                        i64::try_from(lifecycle.generation).map_err(|_| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "project generation exceeds SQLite range".to_owned(),
+                            )
+                        })?,
+                    ],
+                )
+                .map_err(|error| self.database_error(error))?;
+
+            transaction
+                .execute("DELETE FROM events WHERE project_id = ?1", [project_id])
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute(
+                    "DELETE FROM approved_sources WHERE project_id = ?1",
+                    [project_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute(
+                    "DELETE FROM legacy_approved_source_issues WHERE project_id = ?1",
+                    [project_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute(
+                    "DELETE FROM approved_source_blobs WHERE project_id = ?1",
+                    [project_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute(
+                    "DELETE FROM artifact_write_authority WHERE project_id = ?1",
+                    [project_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute(
+                    "DELETE FROM project_artifact_state WHERE project_id = ?1",
+                    [project_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute(
+                    "DELETE FROM artifact_snapshots WHERE project_id = ?1",
+                    [project_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .commit()
+                .map_err(|error| self.database_error(error))?;
+            drop(connection);
+
+            self.remove_native_artifact_project_dir(project_id)?;
+            let connection = self.open_connection()?;
+            truncate_wal_after_erasure(&connection, &self.path)
+        })
+    }
+
+    pub(crate) fn erase_project_with_legacy_cleanup(
+        &self,
+        project_id: &str,
+        legacy_vault: &Path,
+    ) -> Result<(), LeyCoreError> {
+        let legacy_vault = legacy_vault
+            .canonicalize()
+            .map_err(|source| LeyCoreError::Io {
+                path: legacy_vault.to_path_buf(),
+                source,
+            })?;
+        let legacy_vault = legacy_vault
+            .to_str()
+            .ok_or_else(|| LeyCoreError::NonUtf8Path(legacy_vault.clone()))?;
+        let cleanup_json =
+            serde_json::to_string(&json!({"legacyVault": legacy_vault})).map_err(|error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "project erasure cleanup metadata could not be serialized: {error}"
+                ))
+            })?;
+        self.erase_project_with_cleanup(
+            project_id,
+            "legacy-and-native",
+            Some(cleanup_json.as_str()),
+        )
+    }
+
+    fn erase_project_with_cleanup(
+        &self,
+        project_id: &str,
+        cleanup_kind: &str,
+        cleanup_json: Option<&str>,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_artifact_authority_lock(|| {
+            let mut connection = self.open_connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| self.database_error(error))?;
+            let lifecycle = crate::project_brain::lifecycle_on(&transaction, project_id, self)?;
+            match lifecycle {
+                Some(crate::project_brain::ProjectLifecycle {
+                    state: crate::project_brain::ProjectLifecycleState::Erased,
+                    ..
+                }) => {
+                    transaction
+                        .commit()
+                        .map_err(|error| self.database_error(error))?;
+                    truncate_wal_after_erasure(&connection, &self.path)?;
+                    return Ok(());
+                }
+                Some(crate::project_brain::ProjectLifecycle {
+                    state: crate::project_brain::ProjectLifecycleState::Erasing,
+                    cleanup_kind: existing_kind,
+                    cleanup_json: existing_json,
+                    ..
+                }) => {
+                    if existing_kind != cleanup_kind || existing_json.as_deref() != cleanup_json {
+                        return Err(LeyCoreError::InvalidContinuityStore(format!(
+                            "project {project_id} already has different pending erasure cleanup"
+                        )));
+                    }
+                }
+                Some(crate::project_brain::ProjectLifecycle {
+                    generation,
+                    state: crate::project_brain::ProjectLifecycleState::Active,
+                    ..
+                }) => {
+                    let next_generation = generation.checked_add(1).ok_or_else(|| {
+                        LeyCoreError::InvalidContinuityStore(
+                            "project generation overflow during erasure".to_owned(),
+                        )
+                    })?;
+                    let updated_at = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|_| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "system clock is before the Unix epoch".to_owned(),
+                            )
+                        })?
+                        .as_millis();
+                    let updated_at = i64::try_from(updated_at).map_err(|_| {
+                        LeyCoreError::InvalidContinuityStore(
+                            "project erasure timestamp exceeds SQLite range".to_owned(),
+                        )
+                    })?;
+                    transaction
+                        .execute(
+                            "UPDATE project_lifecycle
+                             SET generation = ?1, state = 'erasing', updated_at_unix_ms = ?2,
+                                 cleanup_kind = ?3, cleanup_json = ?4
+                             WHERE project_id = ?5 AND generation = ?6 AND state = 'active'",
+                            params![
+                                i64::try_from(next_generation).map_err(|_| {
+                                    LeyCoreError::InvalidContinuityStore(
+                                        "project generation exceeds SQLite range".to_owned(),
+                                    )
+                                })?,
+                                updated_at,
+                                cleanup_kind,
+                                cleanup_json,
+                                project_id,
+                                i64::try_from(generation).map_err(|_| {
+                                    LeyCoreError::InvalidContinuityStore(
+                                        "project generation exceeds SQLite range".to_owned(),
+                                    )
+                                })?,
+                            ],
+                        )
+                        .map_err(|error| self.database_error(error))?;
+                    transaction
+                        .execute(
+                            "DELETE FROM project_observations WHERE project_id = ?1",
+                            [project_id],
+                        )
+                        .map_err(|error| self.database_error(error))?;
+                    transaction
+                        .execute("DELETE FROM projects WHERE project_id = ?1", [project_id])
+                        .map_err(|error| self.database_error(error))?;
+                }
+                None => {
+                    let project_exists: bool = transaction
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                            [project_id],
+                            |row| row.get(0),
+                        )
+                        .map_err(|error| self.database_error(error))?;
+                    if !project_exists {
+                        transaction
+                            .execute(
+                                "DELETE FROM project_observations WHERE project_id = ?1",
+                                [project_id],
+                            )
+                            .map_err(|error| self.database_error(error))?;
+                        if cleanup_kind == "legacy-and-native" {
+                            let updated_at = i64::try_from(
+                                SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .map_err(|_| {
+                                        LeyCoreError::InvalidContinuityStore(
+                                            "system clock is before the Unix epoch".to_owned(),
+                                        )
+                                    })?
+                                    .as_millis(),
+                            )
+                            .map_err(|_| {
+                                LeyCoreError::InvalidContinuityStore(
+                                    "project erasure timestamp exceeds SQLite range".to_owned(),
+                                )
+                            })?;
+                            transaction
+                                .execute(
+                                    "INSERT INTO project_lifecycle(
+                                        project_id, generation, state, updated_at_unix_ms,
+                                        create_request_id, create_request_fingerprint,
+                                        cleanup_kind, cleanup_json
+                                     ) VALUES (?1, 1, 'erasing', ?2, NULL, NULL, ?3, ?4)",
+                                    params![project_id, updated_at, cleanup_kind, cleanup_json],
+                                )
+                                .map_err(|error| self.database_error(error))?;
+                        } else {
+                            transaction
+                                .commit()
+                                .map_err(|error| self.database_error(error))?;
+                            self.remove_native_artifact_project_dir(project_id)?;
+                            truncate_wal_after_erasure(&connection, &self.path)?;
+                            return Ok(());
+                        }
+                    }
+                    if project_exists {
+                        return Err(LeyCoreError::InvalidContinuityStore(format!(
+                            "project {project_id} exists without a lifecycle row"
+                        )));
+                    }
+                }
+            }
+            transaction
+                .commit()
+                .map_err(|error| self.database_error(error))?;
+            drop(connection);
+
+            if cleanup_kind == "legacy-and-native" {
+                let cleanup_json = cleanup_json.ok_or_else(|| {
+                    LeyCoreError::InvalidContinuityStore(
+                        "legacy project erasure is missing cleanup metadata".to_owned(),
+                    )
+                })?;
+                let cleanup: Value = serde_json::from_str(cleanup_json).map_err(|error| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "project erasure cleanup metadata is invalid: {error}"
+                    ))
+                })?;
+                let legacy_vault = cleanup
+                    .get("legacyVault")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        LeyCoreError::InvalidContinuityStore(
+                            "project erasure cleanup metadata is missing legacyVault".to_owned(),
+                        )
+                    })?;
+                crate::ingestion::erase_legacy_project_memory_by_id_terminal(
+                    Path::new(legacy_vault),
+                    project_id,
+                )?;
+            }
+            self.remove_native_artifact_project_dir(project_id)?;
+
+            let connection = self.open_connection()?;
+            truncate_wal_after_erasure(&connection, &self.path)?;
+            drop(connection);
+
+            let mut connection = self.open_connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| self.database_error(error))?;
+            let changed = transaction
+                .execute(
+                    "UPDATE project_lifecycle
+                     SET state = 'erased', updated_at_unix_ms = ?1,
+                         cleanup_kind = 'none', cleanup_json = NULL
+                     WHERE project_id = ?2 AND state = 'erasing'",
+                    params![
+                        i64::try_from(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map_err(|_| {
+                                    LeyCoreError::InvalidContinuityStore(
+                                        "system clock is before the Unix epoch".to_owned(),
+                                    )
+                                })?
+                                .as_millis()
+                        )
+                        .map_err(|_| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "project erasure timestamp exceeds SQLite range".to_owned(),
+                            )
+                        })?,
+                        project_id
+                    ],
+                )
+                .map_err(|error| self.database_error(error))?;
+            if changed != 1 {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "project {project_id} erasure lifecycle changed during cleanup"
+                )));
+            }
             transaction
                 .commit()
                 .map_err(|error| self.database_error(error))?;
@@ -3917,6 +4375,19 @@ impl ContinuityStore {
             return Err(LeyCoreError::InvalidContinuityStore(format!(
                 "project {project_id} is not present in the continuity database"
             )));
+        }
+        let source_version_count: i64 = source
+            .query_row(
+                "SELECT count(*) FROM source_versions WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if source_version_count != 0 {
+            return Err(LeyCoreError::InvalidPortableContinuityBundle(
+                "portable continuity v1 cannot represent retained Project Brain SourceVersions; export is disabled until the Project Brain bundle format includes their retained representations"
+                    .to_owned(),
+            ));
         }
 
         prepare_private_database_file(destination)?;
@@ -3967,6 +4438,12 @@ impl ContinuityStore {
         transaction
             .execute("DELETE FROM project_observations", [])
             .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute("DELETE FROM working_copy_locators", [])
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute("DELETE FROM source_locators", [])
+            .map_err(|error| database_error(destination, error))?;
         // Current artifact capture is rebuildable machine-local state. Portable bundles preserve
         // exact durably cited evidence through their dedicated evidence root; exporting the current
         // snapshot or its local write-authority marker would falsely imply that the restored machine
@@ -3982,12 +4459,26 @@ impl ContinuityStore {
             .map_err(|error| database_error(destination, error))?;
         transaction
             .execute(
-                "UPDATE local_migration_state SET project_catalog_migrated = 0 WHERE singleton = 1",
+                "UPDATE local_migration_state SET project_catalog_migrated = 1 WHERE singleton = 1",
                 [],
             )
             .map_err(|error| database_error(destination, error))?;
         transaction
             .execute("DELETE FROM projects WHERE project_id <> ?1", [project_id])
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute(
+                "DELETE FROM project_lifecycle WHERE project_id <> ?1",
+                [project_id],
+            )
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute(
+                "UPDATE projects
+                 SET agent_egress_policy = 'never-send', agent_egress_policy_migrated = 1
+                 WHERE project_id = ?1",
+                [project_id],
+            )
             .map_err(|error| database_error(destination, error))?;
         transaction
             .commit()
@@ -4012,7 +4503,7 @@ impl ContinuityStore {
         })
     }
 
-    fn open_connection(&self) -> Result<Connection, LeyCoreError> {
+    pub(crate) fn open_connection(&self) -> Result<Connection, LeyCoreError> {
         prepare_private_database_file(&self.path)?;
         let mut connection = Connection::open_with_flags(
             &self.path,
@@ -4024,7 +4515,7 @@ impl ContinuityStore {
         Ok(connection)
     }
 
-    fn database_error(&self, error: rusqlite::Error) -> LeyCoreError {
+    pub(crate) fn database_error(&self, error: rusqlite::Error) -> LeyCoreError {
         database_error(&self.path, error)
     }
 }
@@ -4636,10 +5127,28 @@ fn replace_project_observations_on(
     observations: &[ContinuityProjectObservation],
     path: &Path,
 ) -> Result<(), LeyCoreError> {
+    let store = ContinuityStore::at(path.to_path_buf());
+    for observation in observations {
+        crate::project_brain::ensure_project_not_terminal_on(
+            transaction,
+            &observation.project_id,
+            &store,
+        )?;
+    }
     transaction
         .execute("DELETE FROM project_observations", [])
         .map_err(|error| database_error(path, error))?;
+    let store = ContinuityStore::at(path.to_path_buf());
     for observation in observations {
+        match crate::project_brain::lifecycle_on(transaction, &observation.project_id, &store)? {
+            Some(crate::project_brain::ProjectLifecycle {
+                state:
+                    crate::project_brain::ProjectLifecycleState::Erasing
+                    | crate::project_brain::ProjectLifecycleState::Erased,
+                ..
+            }) => continue,
+            _ => {}
+        }
         transaction
             .execute(
                 "INSERT INTO project_observations(
@@ -4669,6 +5178,8 @@ fn register_project_on(
     path: &Path,
 ) -> Result<ContinuityWrite<ProjectIdentity>, LeyCoreError> {
     validate_identity(identity)?;
+    let store = ContinuityStore::at(path.to_path_buf());
+    crate::project_brain::ensure_project_not_terminal_on(connection, &identity.project_id, &store)?;
     let changed = connection
         .execute(
             "INSERT INTO projects(project_id, name, created_at_unix_ms) VALUES (?1, ?2, ?3) ON CONFLICT(project_id) DO NOTHING",
@@ -4680,6 +5191,7 @@ fn register_project_on(
         )
         .map_err(|error| database_error(path, error))?;
     if changed == 1 {
+        crate::project_brain::ensure_registered_project_lifecycle_on(connection, identity, &store)?;
         return Ok(ContinuityWrite {
             record: identity.clone(),
             created: true,
@@ -4706,18 +5218,52 @@ fn register_project_on(
             )
             .map_err(|error| database_error(path, error))?;
     }
+    crate::project_brain::ensure_registered_project_lifecycle_on(connection, identity, &store)?;
     Ok(ContinuityWrite {
         record: identity.clone(),
         created: false,
     })
 }
 
-fn append_event_on(
+pub(crate) fn append_event_on(
+    connection: &Connection,
+    input: &ContinuityEventInput,
+    path: &Path,
+) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
+    let store = ContinuityStore::at(path.to_path_buf());
+    crate::project_brain::ensure_project_not_terminal_on(connection, &input.project_id, &store)?;
+    if crate::project_brain::is_reserved_project_brain_event_kind(&input.kind) {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "Project Brain event kind {:?} requires its specialized write path",
+            input.kind
+        )));
+    }
+    append_event_on_inner(connection, input, path)
+}
+
+pub(crate) fn append_project_brain_event_on(
+    connection: &Connection,
+    input: &ContinuityEventInput,
+    path: &Path,
+) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
+    if !crate::project_brain::is_reserved_project_brain_event_kind(&input.kind) {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "non-Project-Brain event kind {:?} cannot use the reserved write path",
+            input.kind
+        )));
+    }
+    append_event_on_inner(connection, input, path)
+}
+
+fn append_event_on_inner(
     connection: &Connection,
     input: &ContinuityEventInput,
     path: &Path,
 ) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
     validate_event_input(input)?;
+    let store = ContinuityStore::at(path.to_path_buf());
+    crate::project_brain::ensure_project_not_terminal_on(connection, &input.project_id, &store)?;
+    crate::project_brain::ensure_event_references_not_erased_on(connection, input, &store)?;
     let payload_json = serde_json::to_string(&input.payload).map_err(|error| {
         LeyCoreError::InvalidContinuityStore(format!("event payload is not serializable: {error}"))
     })?;
@@ -5234,6 +5780,181 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), LeyCoreError>
                     ADD COLUMN continuity_origin TEXT NOT NULL DEFAULT 'legacy-unknown'
                     CHECK(continuity_origin IN ('legacy-unknown', 'native-born'));
                 PRAGMA user_version = 11;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 11;
+    }
+    if current_version == 11 {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE project_lifecycle (
+                    project_id TEXT PRIMARY KEY NOT NULL,
+                    generation INTEGER NOT NULL CHECK(generation >= 1),
+                    state TEXT NOT NULL CHECK(state IN ('active', 'erasing', 'erased')),
+                    updated_at_unix_ms INTEGER NOT NULL CHECK(updated_at_unix_ms >= 0),
+                    create_request_id TEXT UNIQUE,
+                    create_request_fingerprint TEXT,
+                    cleanup_kind TEXT NOT NULL DEFAULT 'none'
+                        CHECK(cleanup_kind IN ('none', 'native', 'legacy-and-native')),
+                    cleanup_json TEXT CHECK(cleanup_json IS NULL OR json_valid(cleanup_json)),
+                    CHECK((create_request_id IS NULL) = (create_request_fingerprint IS NULL)),
+                    CHECK(
+                        (state = 'active' AND cleanup_kind = 'none' AND cleanup_json IS NULL)
+                        OR state IN ('erasing', 'erased')
+                    )
+                ) STRICT;
+                INSERT INTO project_lifecycle(
+                    project_id, generation, state, updated_at_unix_ms,
+                    create_request_id, create_request_fingerprint, cleanup_kind, cleanup_json
+                )
+                SELECT project_id, 1, 'active', created_at_unix_ms,
+                       NULL, NULL, 'none', NULL
+                FROM projects;
+
+                CREATE TRIGGER projects_reject_terminal_lifecycle
+                BEFORE INSERT ON projects
+                WHEN EXISTS(
+                    SELECT 1 FROM project_lifecycle
+                    WHERE project_id = NEW.project_id AND state <> 'active'
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'project lifecycle is not active');
+                END;
+
+                CREATE TABLE project_repositories (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES projects(project_id) ON DELETE CASCADE,
+                    repository_id TEXT NOT NULL UNIQUE CHECK(length(repository_id) > 0),
+                    attached_at_unix_ms INTEGER NOT NULL CHECK(attached_at_unix_ms > 0),
+                    UNIQUE(project_id, repository_id)
+                ) STRICT;
+
+                CREATE TABLE working_copy_locators (
+                    project_id TEXT NOT NULL,
+                    repository_id TEXT NOT NULL,
+                    locator_id TEXT NOT NULL CHECK(length(locator_id) > 0),
+                    local_path TEXT NOT NULL CHECK(length(local_path) > 0),
+                    state TEXT NOT NULL CHECK(state IN ('authorized', 'revoked')),
+                    authorized_at_unix_ms INTEGER NOT NULL CHECK(authorized_at_unix_ms > 0),
+                    revoked_at_unix_ms INTEGER CHECK(revoked_at_unix_ms IS NULL OR revoked_at_unix_ms > 0),
+                    last_observed_at_unix_ms INTEGER NOT NULL CHECK(last_observed_at_unix_ms > 0),
+                    revision_head TEXT,
+                    revision_branch TEXT,
+                    PRIMARY KEY(project_id, locator_id),
+                    FOREIGN KEY(project_id, repository_id)
+                        REFERENCES project_repositories(project_id, repository_id) ON DELETE CASCADE,
+                    CHECK(
+                        (state = 'authorized' AND revoked_at_unix_ms IS NULL)
+                        OR (state = 'revoked' AND revoked_at_unix_ms IS NOT NULL)
+                    )
+                ) STRICT;
+                CREATE UNIQUE INDEX working_copy_active_path_unique
+                    ON working_copy_locators(local_path)
+                    WHERE state = 'authorized';
+                CREATE INDEX working_copy_project_state
+                    ON working_copy_locators(project_id, state, last_observed_at_unix_ms);
+
+                CREATE TABLE project_sources (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+                    source_id TEXT NOT NULL CHECK(length(source_id) > 0),
+                    source_kind TEXT NOT NULL CHECK(length(source_kind) > 0),
+                    display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 1024),
+                    state TEXT NOT NULL CHECK(state IN ('active', 'removed', 'erased')),
+                    created_at_unix_ms INTEGER NOT NULL CHECK(created_at_unix_ms > 0),
+                    removed_at_unix_ms INTEGER CHECK(removed_at_unix_ms IS NULL OR removed_at_unix_ms > 0),
+                    erased_at_unix_ms INTEGER CHECK(erased_at_unix_ms IS NULL OR erased_at_unix_ms > 0),
+                    PRIMARY KEY(project_id, source_id),
+                    CHECK(
+                        (state = 'active' AND removed_at_unix_ms IS NULL AND erased_at_unix_ms IS NULL)
+                        OR (state = 'removed' AND removed_at_unix_ms IS NOT NULL AND erased_at_unix_ms IS NULL)
+                        OR (state = 'erased' AND erased_at_unix_ms IS NOT NULL)
+                    )
+                ) STRICT;
+                CREATE INDEX project_sources_state
+                    ON project_sources(project_id, state, created_at_unix_ms, source_id);
+
+                CREATE TABLE source_versions (
+                    project_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source_version_id TEXT NOT NULL CHECK(length(source_version_id) > 0),
+                    representation_kind TEXT NOT NULL CHECK(length(representation_kind) > 0),
+                    content_hash TEXT NOT NULL
+                        CHECK(length(content_hash) = 71 AND substr(content_hash, 1, 7) = 'sha256:'),
+                    original_content_hash TEXT
+                        CHECK(original_content_hash IS NULL OR (length(original_content_hash) = 71 AND substr(original_content_hash, 1, 7) = 'sha256:')),
+                    source_bytes INTEGER NOT NULL CHECK(source_bytes >= 0),
+                    stored_bytes INTEGER NOT NULL CHECK(stored_bytes >= 0),
+                    transformation_json TEXT NOT NULL CHECK(json_valid(transformation_json)),
+                    retained_at_unix_ms INTEGER NOT NULL CHECK(retained_at_unix_ms > 0),
+                    PRIMARY KEY(project_id, source_id, source_version_id),
+                    FOREIGN KEY(project_id, source_id)
+                        REFERENCES project_sources(project_id, source_id) ON DELETE CASCADE
+                ) STRICT;
+                CREATE INDEX source_versions_content_hash
+                    ON source_versions(project_id, content_hash, source_id, source_version_id);
+
+                CREATE TABLE source_locators (
+                    project_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    locator_id TEXT NOT NULL CHECK(length(locator_id) > 0),
+                    locator_kind TEXT NOT NULL CHECK(length(locator_kind) > 0),
+                    locator_value TEXT NOT NULL CHECK(length(locator_value) > 0),
+                    state TEXT NOT NULL CHECK(state IN ('observed', 'revoked')),
+                    observed_at_unix_ms INTEGER NOT NULL CHECK(observed_at_unix_ms > 0),
+                    revoked_at_unix_ms INTEGER CHECK(revoked_at_unix_ms IS NULL OR revoked_at_unix_ms > 0),
+                    PRIMARY KEY(project_id, source_id, locator_id),
+                    FOREIGN KEY(project_id, source_id)
+                        REFERENCES project_sources(project_id, source_id) ON DELETE CASCADE,
+                    CHECK(
+                        (state = 'observed' AND revoked_at_unix_ms IS NULL)
+                        OR (state = 'revoked' AND revoked_at_unix_ms IS NOT NULL)
+                    )
+                ) STRICT;
+                CREATE UNIQUE INDEX source_locator_observed_value_unique
+                    ON source_locators(project_id, locator_kind, locator_value)
+                    WHERE state = 'observed';
+
+                CREATE TABLE project_sessions (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+                    session_id TEXT NOT NULL CHECK(length(session_id) > 0),
+                    host_kind TEXT,
+                    external_session_id TEXT,
+                    state TEXT NOT NULL CHECK(state IN ('active', 'finished', 'erased')),
+                    started_at_unix_ms INTEGER CHECK(started_at_unix_ms IS NULL OR started_at_unix_ms > 0),
+                    ended_at_unix_ms INTEGER CHECK(ended_at_unix_ms IS NULL OR ended_at_unix_ms > 0),
+                    created_at_unix_ms INTEGER NOT NULL CHECK(created_at_unix_ms > 0),
+                    erased_at_unix_ms INTEGER CHECK(erased_at_unix_ms IS NULL OR erased_at_unix_ms > 0),
+                    observation_limits_json TEXT NOT NULL CHECK(json_valid(observation_limits_json)),
+                    PRIMARY KEY(project_id, session_id),
+                    CHECK(
+                        (state = 'active' AND ended_at_unix_ms IS NULL AND erased_at_unix_ms IS NULL)
+                        OR (state = 'finished' AND ended_at_unix_ms IS NOT NULL AND erased_at_unix_ms IS NULL)
+                        OR (state = 'erased' AND erased_at_unix_ms IS NOT NULL)
+                    )
+                ) STRICT;
+                CREATE INDEX project_sessions_state
+                    ON project_sessions(project_id, state, created_at_unix_ms, session_id);
+
+                CREATE TABLE event_source_version_links (
+                    project_id TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source_version_id TEXT NOT NULL,
+                    relation TEXT NOT NULL CHECK(length(relation) > 0),
+                    selector_version INTEGER NOT NULL CHECK(selector_version >= 1),
+                    selector_json TEXT NOT NULL CHECK(json_valid(selector_json)),
+                    PRIMARY KEY(project_id, event_id, source_id, source_version_id, relation, selector_version),
+                    FOREIGN KEY(project_id, event_id)
+                        REFERENCES events(project_id, event_id) ON DELETE CASCADE,
+                    FOREIGN KEY(project_id, source_id, source_version_id)
+                        REFERENCES source_versions(project_id, source_id, source_version_id) ON DELETE CASCADE
+                ) STRICT;
+                CREATE INDEX event_source_version_links_reverse
+                    ON event_source_version_links(project_id, source_id, source_version_id, relation, event_id);
+
+                PRAGMA user_version = 12;
                 "#,
             )
             .map_err(|error| database_error(path, error))?;
@@ -5931,7 +6652,7 @@ fn validate_native_artifact_blob_metadata(
     Ok(())
 }
 
-fn read_event_by_request(
+pub(crate) fn read_event_by_request(
     connection: &Connection,
     project_id: &str,
     session_id: Option<&str>,
@@ -6735,7 +7456,16 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "DROP TABLE artifact_write_authority;
+                "DROP TABLE event_source_version_links;
+                 DROP TABLE source_locators;
+                 DROP TABLE source_versions;
+                 DROP TABLE project_sources;
+                 DROP TABLE working_copy_locators;
+                 DROP TABLE project_repositories;
+                 DROP TABLE project_sessions;
+                 DROP TRIGGER projects_reject_terminal_lifecycle;
+                 DROP TABLE project_lifecycle;
+                 DROP TABLE artifact_write_authority;
                  DROP TABLE project_artifact_state;
                  DROP TABLE artifact_files;
                  DROP TABLE artifact_snapshots;
@@ -6829,7 +7559,16 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "CREATE TABLE artifact_authority_cutovers (
+                "DROP TABLE event_source_version_links;
+                 DROP TABLE source_locators;
+                 DROP TABLE source_versions;
+                 DROP TABLE project_sources;
+                 DROP TABLE working_copy_locators;
+                 DROP TABLE project_repositories;
+                 DROP TABLE project_sessions;
+                 DROP TRIGGER projects_reject_terminal_lifecycle;
+                 DROP TABLE project_lifecycle;
+                 CREATE TABLE artifact_authority_cutovers (
                     project_id TEXT PRIMARY KEY NOT NULL
                         REFERENCES projects(project_id) ON DELETE CASCADE,
                     legacy_snapshot_id TEXT NOT NULL,

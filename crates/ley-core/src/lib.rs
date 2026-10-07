@@ -32,6 +32,7 @@ mod memory_compiler;
 mod policy_bundle;
 mod private_state;
 mod project_activity;
+mod project_brain;
 mod project_catalog;
 mod project_memory_search;
 mod recovery_compat;
@@ -225,6 +226,12 @@ pub use project_activity::{
     ProjectProblemAttempt, ProjectProblemResolution, ProjectProblemScope,
     DEFAULT_PROJECT_ACTIVITY_RESULTS, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS,
     MAX_PROJECT_ACTIVITY_RESULTS,
+};
+pub use project_brain::{
+    CreateProjectBrainInput, ProjectBrain, ProjectHandle, ProjectRepositoryAttachment,
+    ProjectSession, ProjectSessionState, ProjectSource, ProjectSourceState, RetainedSourceVersion,
+    SourceLocator, SourceLocatorState, SourceVersionInput, WorkingCopyLocator, WorkingCopyState,
+    MAX_PROJECT_BRAIN_SOURCE_BYTES,
 };
 pub use project_catalog::{
     ObservedProject, ObservedProjectList, ProjectCatalog, DEFAULT_PROJECT_CATALOG_RESULTS,
@@ -550,6 +557,18 @@ pub enum LeyCoreError {
     InvalidCaptureMode(String),
     #[error("invalid Ley project identity: {0}")]
     InvalidProjectIdentity(String),
+    #[error("Ley project {project_id} is being erased")]
+    ProjectErasing { project_id: String },
+    #[error("Ley project {project_id} was erased and cannot be reactivated automatically")]
+    ProjectErased { project_id: String },
+    #[error(
+        "Ley project {project_id} changed generation from expected {expected} to {current}; refresh project state before retrying"
+    )]
+    ProjectGenerationChanged {
+        project_id: String,
+        expected: u64,
+        current: u64,
+    },
     #[error("invalid Ley capture policy: {0}")]
     InvalidCapturePolicy(String),
     #[error("invalid Ley vault binding registry: {0}")]

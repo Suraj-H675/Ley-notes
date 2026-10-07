@@ -5,8 +5,7 @@ mod runtime;
 use host_integrations::HostIntegrationStatus;
 use ley_core::{
     compile_project_context_for_agent_with_transition_registries,
-    correct_learning_with_continuity_transition, diagnose_project,
-    erase_project_memory_with_continuity_transition, erase_project_memory_with_native_authority,
+    correct_learning_with_continuity_transition, diagnose_project, erase_project_memory,
     erase_session_memory_with_continuity_transition, establish_native_born_project_authorities,
     export_portable_continuity, generate_learning_request_id, generate_request_id,
     ingest_project_with_continuity_transition,
@@ -51,8 +50,8 @@ use ley_core::{
 };
 #[cfg(test)]
 use ley_core::{
-    correct_learning, erase_project_memory, ingest_project, initialize_project, read_learning,
-    rename_session, review_learning,
+    correct_learning, ingest_project, initialize_project, read_learning, rename_session,
+    review_learning,
 };
 use runtime::AgentRuntimeStatus;
 use serde::Serialize;
@@ -1048,16 +1047,12 @@ fn erase_agent_project_memory_with_registry_and_store(
 ) -> Result<AgentProjectInspection, String> {
     with_transition_agent_access_from(project_path, None, registry, store, |access, store| {
         match &access.storage {
-            AgentMemoryStorage::Native { .. } => {
-                erase_project_memory_with_native_authority(project_path, store).map(|_| ())
+            AgentMemoryStorage::Native { project_id } => {
+                store.reset_agent_memory_for_recapture(project_id)
             }
-            AgentMemoryStorage::LegacyVault { .. } => {
-                erase_project_memory_with_continuity_transition(
-                    project_path,
-                    &access.legacy_vault_path,
-                    store,
-                )
-                .map(|_| ())
+            AgentMemoryStorage::LegacyVault { project_id, .. } => {
+                erase_project_memory(project_path, &access.legacy_vault_path)?;
+                store.reset_agent_memory_for_recapture(project_id)
             }
         }
     })

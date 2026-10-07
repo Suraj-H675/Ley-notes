@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Exercise Ley's real CLI in disposable Linux state and retain evidence."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class Run:
+    def __init__(self, evidence):
+        self.evidence = evidence.resolve()
+        self.manifest = self.evidence / "run.json"
+        self.state = json.loads(self.manifest.read_text()) if self.manifest.exists() else {}
+
+    def save(self):
+        self.manifest.write_text(json.dumps(self.state, indent=2) + "\n")
+
+    def command(self, label, args, env=None):
+        result = subprocess.run(args, cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+        record = dict(command=args, exitCode=result.returncode, stdout=result.stdout, stderr=result.stderr)
+        (self.evidence / f"{label}.json").write_text(json.dumps(record, indent=2) + "\n")
+        if result.returncode:
+            raise RuntimeError(f"{label} failed, see {self.evidence / (label + '.json')}")
+        return result.stdout
+
+    def scratch(self):
+        path = Path(self.state["scratch"])
+        if path.parent != Path(tempfile.gettempdir()).resolve() or not path.name.startswith("ley-verify-"):
+            raise RuntimeError("Unexpected scratch path")
+        if path.is_symlink() or (path / ".verification-owner").read_text() != str(self.evidence):
+            raise RuntimeError("Scratch ownership mismatch")
+        return path
+
+    def cli(self, label, *args):
+        scratch = self.scratch()
+        env = os.environ.copy()
+        env.pop("LEY_EVAL_PRIVATE_ROOT", None)
+        for key, folder in [("XDG_CONFIG_HOME", "config"), ("XDG_CACHE_HOME", "cache"), ("XDG_DATA_HOME", "data")]:
+            env[key] = str(scratch / folder)
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        return json.loads(self.command(label, [str(scratch / "ley"), *map(str, args)], env))
+
+    def launch(self):
+        if not sys.platform.startswith("linux"):
+            raise RuntimeError("This helper uses Linux XDG isolation; use eval-private-root fixtures on other OSes")
+        self.evidence.mkdir(parents=True, exist_ok=False)
+        self.state = {"repo": str(ROOT), "started": time.time(), "surface": "CLI", "nativeUiVerified": False}
+        self.save()
+        self.command("build", ["cargo", "build", "--locked", "--offline", "-p", "ley-cli"])
+        scratch = Path(tempfile.mkdtemp(prefix="ley-verify-")).resolve()
+        (scratch / ".verification-owner").write_text(str(self.evidence))
+        self.state["scratch"] = str(scratch)
+        self.save()
+        for name in ["project", "config", "cache", "data"]:
+            (scratch / name).mkdir(mode=0o700)
+        shutil.copy2(ROOT / "target/debug/ley", scratch / "ley")
+        self.state["binarySha256"] = digest(scratch / "ley")
+        project = scratch / "project"
+        (project / "README.md").write_text("# Verification project\nverificationbeacon continuity evidence\n")
+        self.state["sourceSha256"] = digest(project / "README.md")
+        self.state["revision"] = self.command("revision", ["git", "rev-parse", "HEAD"]).strip()
+        self.command("worktree", ["git", "status", "--short"])
+        self.save()
+        self.cli("init", "init", project, "--name", "Ley verification", "--json")
+        self.doctor()
+        captured = self.cli("ingest", "ingest", project, "--json")
+        assert captured["storage"] == "native-continuity" and captured["binding"] is None
+        self.save()
+
+    def doctor(self):
+        scratch = self.scratch()
+        assert digest(scratch / "ley") == self.state["binarySha256"], "Binary changed"
+        result = self.cli("doctor", "doctor", scratch / "project", "--json")
+        assert Path(result["root"]).resolve() == scratch / "project", "Wrong project"
+        assert result["identity"]["name"] == "Ley verification", "Wrong identity"
+        return result
+
+    def drive(self):
+        self.doctor()
+        project = self.scratch() / "project"
+        preview = self.cli("preview", "preview", project, "--json")
+        assert "README.md" in [f["path"] for f in preview["files"]]
+        started = self.cli("session-start", "session", "start", project, "--name", "Verification session", "--goal", "Preserve verificationbeacon evidence", "--json")
+        sid = started["session"]["sessionId"]
+        self.state["sessionId"] = sid
+        self.save()
+        self.cli("checkpoint", "session", "checkpoint", sid, project, "--summary", "Verified verificationbeacon capture", "--touched", "README.md", "--json")
+        shown = self.cli("session-show", "session", "show", sid, project, "--json")
+        assert shown["checkpoints"][0]["summary"] == "Verified verificationbeacon capture"
+        found = self.cli("search-match", "search", "verificationbeacon", project, "--json")
+        assert found["results"], "Seeded evidence was not found"
+        missing = self.cli("search-miss", "search", "zzzxmissingfixturezzzx", project, "--json")
+        assert missing["results"] == []
+        self.cli("egress-set", "egress", "project", "local-model-only", project, "--json")
+        policy = self.cli("egress-list", "egress", "list", project, "--json")
+        assert policy["projectPolicy"] == "local-model-only"
+        self.cli("egress-restore", "egress", "project", "agent-ok", project, "--json")
+        assert self.cli("egress-restored", "egress", "list", project, "--json")["projectPolicy"] == "agent-ok"
+        assert digest(project / "README.md") == self.state["sourceSha256"], "User source changed"
+        files = {str(p.relative_to(self.scratch())): digest(p) for p in self.scratch().rglob("*") if p.is_file()}
+        assert any(p.startswith("config/") for p in files), "No private persistence"
+        (self.evidence / "files.json").write_text(json.dumps(files, indent=2) + "\n")
+        self.state["passed"] = ["capture-cli", "session-cli", "search-cli", "egress-cli"]
+        self.save()
+
+    def cleanup(self):
+        if "scratch" in self.state and Path(self.state["scratch"]).exists():
+            shutil.rmtree(self.scratch())
+        self.state["cleaned"] = True
+        self.save()
+        assert self.manifest.is_file(), "Evidence was removed"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["all", "launch", "doctor", "drive", "cleanup"])
+    parser.add_argument("evidence", type=Path, help="New evidence directory for launch/all; same directory for later steps")
+    args = parser.parse_args()
+    if args.action in ("all", "launch") and args.evidence.exists():
+        parser.error("Use a new evidence directory; existing runs are preserved")
+    run = Run(args.evidence)
+    try:
+        if args.action == "all":
+            try:
+                run.launch()
+                run.drive()
+            finally:
+                if run.manifest.exists():
+                    run.cleanup()
+        else:
+            getattr(run, args.action)()
+    except Exception as error:
+        if run.manifest.exists():
+            run.state["failure"] = str(error)
+            run.save()
+            if not run.state.get("cleaned"):
+                run.cleanup()
+        raise
+    print(run.evidence)
+
+
+if __name__ == "__main__":
+    main()

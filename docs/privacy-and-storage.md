@@ -36,9 +36,10 @@ The current/target boundary remains:
 
 ### Private Brain state
 
-Machine-managed Project Brain state belongs in owner-private OS storage. The current implementation uses a single
-project-partitioned SQLite database plus private content-addressed evidence files; M1 may evolve the schema without
-weakening privacy/isolation.
+Machine-managed Project Brain state belongs in owner-private OS storage. M1 now uses the existing single
+project-partitioned SQLite authority at schema v12 plus the private content-addressed evidence store for exact
+retained SourceVersion representations. This preserves the existing private-file, no-follow, transactional, WAL,
+secure-delete, and project-isolation safeguards rather than creating another mutable store.
 
 Private Brain state includes canonical history, review actions, retained private SourceVersions, privacy/egress
 state, and lifecycle/deletion state. It should not be spread into multiple mutable stores merely to serve UI views.
@@ -181,7 +182,10 @@ Project Brain distinguishes operations with different privacy effects:
 | Erase Brain | Remove Ley-controlled canonical/derived state for that Project while preserving user-owned originals |
 
 Erasure must prevent stale/in-flight hooks, imports, or analysis results from resurrecting data after the erasure
-commit. M1 must provide a durable generation/tombstone/equivalent lifecycle guard.
+commit. M1 now provides a durable Project generation/tombstone lifecycle guard. Whole-Brain erase fences the
+Project as `erasing` before filesystem cleanup; interrupted cleanup remains retryable, and terminal erased IDs are
+not automatically reusable. Source/Session erase also advances the Project generation and leaves scrubbed identity
+tombstones so stale writes cannot silently reuse the erased identity.
 
 Filesystem evidence and database rows cannot always be removed in one atomic transaction. Interrupted cleanup must
 be detectable and safely retryable. Ley must not claim forensic deletion of backups, filesystem snapshots, SSD
@@ -192,6 +196,11 @@ remnants, user-created exports, original project files, or downstream provider c
 A complete Brain backup/export must include all intentionally retained canonical Project state, including uncited
 retained Sources/SourceVersions. The preceding cited-only artifact export behavior is insufficient for a Project
 Brain backup.
+
+The current portable-continuity v1 format does **not** yet satisfy that complete Project Brain backup contract. M1
+fails export closed when retained Project Brain SourceVersions are present rather than silently dropping them. A
+later portable format must carry all retained canonical SourceVersion representations and their provenance before
+Ley can call that export a complete Brain backup.
 
 Rebuildable indexes may be omitted when they can safely be regenerated.
 
