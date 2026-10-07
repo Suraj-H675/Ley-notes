@@ -30,7 +30,7 @@ Canonical retained history and human decisions must survive rebuilding derived k
 
 ## Current implementation foundation
 
-The runtime still contains the preceding focused-continuity product, alongside the M1 Project Brain
+The runtime still contains the preceding focused-continuity product, alongside the M1-M3 Project Brain
 persistence foundation and M2 deterministic import. The final Desktop and agent retrieval experience remains deferred.
 
 ### Product surfaces
@@ -158,8 +158,11 @@ Codex and Claude integration already has strong reusable work:
 - stable Ley session association;
 - separation of host detection, configuration, review/restart, and observed runtime activity.
 
-The future Chronicle may capture more supported observations, but it must remain adapter/version aware and expose
-gaps rather than promise complete transcripts or hidden reasoning.
+M3 now adds the first canonical Project Chronicle adapter for explicitly authorized Codex working copies. New Codex
+Episodes are ordered per Session, provenance/evidence-basis aware, bounded/redacted, replay-safe, and explicit about
+gaps. The hook never reads raw transcript files and a returned tool result is not verification. Historical structured
+continuity is normalized only as compatibility metadata without upgrading reported claims to observed truth. Claude
+Project Brain capture remains deferred; the older Codex/Claude continuity adapters still exist for transition state.
 
 ## M1 domain/persistence boundaries
 
@@ -193,9 +196,10 @@ and omissions.
 ### Session and Episode
 
 Session identifies a host work session. Episode is one supported observable occurrence. Inferred semantic grouping
-is derived rather than fabricated as canonical chronology. M1 intentionally reuses the existing project-qualified,
-idempotent event ledger as the Episode/capture-occurrence/human-action history instead of adding parallel append-only
-tables.
+is derived rather than fabricated as canonical chronology. M3 keeps each retained event body once in the existing
+project-qualified/idempotent event ledger and adds typed Chronicle metadata beside it: per-session sequence, kind,
+evidence basis, producer/origin, supported host references, and explicit gaps. Parallel Sessions retain independent
+sequence spaces instead of being forced into a fictitious global causal order.
 
 ### Evidence reference
 

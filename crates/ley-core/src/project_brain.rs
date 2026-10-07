@@ -32,7 +32,8 @@ const SUPPORTED_OBSERVED_EPISODE_KINDS: &[&str] = &[
 pub(crate) fn is_reserved_project_brain_event_kind(kind: &str) -> bool {
     matches!(
         kind,
-        EVENT_KIND_SOURCE_VERSION_RETAINED
+        crate::chronicle::CHRONICLE_EVENT_KIND
+            | EVENT_KIND_SOURCE_VERSION_RETAINED
             | EVENT_KIND_SOURCE_CREATED
             | EVENT_KIND_SOURCE_LOCATOR_ATTACHED
             | EVENT_KIND_EPISODE_RECORDED
@@ -2323,7 +2324,7 @@ pub(crate) fn read_source_version_on(
         .transpose()
 }
 
-fn read_session_on(
+pub(crate) fn read_session_on(
     connection: &Connection,
     project_id: &str,
     session_id: &str,
@@ -3347,7 +3348,10 @@ mod tests {
             .execute_batch(
                 r#"
                 PRAGMA foreign_keys = OFF;
-                DROP TABLE working_copy_import_heads;
+                DROP TABLE chronicle_session_capture;
+                 DROP TABLE chronicle_capture_grants;
+                 DROP TABLE chronicle_episodes;
+                 DROP TABLE working_copy_import_heads;
                  DROP TABLE working_copy_inventory;
                  DROP TABLE import_source_paths;
                  DROP TABLE import_erasure_fences;

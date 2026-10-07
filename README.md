@@ -12,10 +12,11 @@ Existing ADRs and older research remain useful implementation history, but they 
 requirements.
 
 > **Migration status:** the repository still implements the preceding focused-continuity runtime while the
-> Project Brain milestones are being built. M1 established path-independent Brain identity and persistence. M2
-> adds deterministic local folder/repository import and inspectable SourceVersions through `ley-core` and the
-> `ley brain` CLI, using schema v13. The final agent workflow, derived knowledge, optional analysis, complete Brain
-> backup, and new Desktop IA remain later milestones.
+> Project Brain milestones are being built. M1 established path-independent Brain identity and persistence; M2
+> added deterministic local folder/repository import and inspectable SourceVersions; M3 adds the canonical Project
+> Chronicle plus explicitly authorized Codex session capture, using schema v14. `$ley` orientation/retrieval, derived
+> knowledge, sources-first construction, cross-agent Chronicle capture, optional analysis, complete Brain backup, and
+> the new Desktop IA remain later milestones.
 
 ## Product surfaces
 
@@ -60,6 +61,8 @@ Today the implementation still exposes the focused continuity foundation that th
 - explicit repository/working-copy, Source/SourceVersion, Session/Episode, and human-action persistence foundations;
 - deterministic offline project import with per-working-copy inventories, retained version inspection, omission
   disclosures, retry safety, and explicit locator movement;
+- a canonical Project Chronicle with per-session observable Episodes, explicit gaps/provenance, replay safety, and a
+  separate Desktop-confirmed Codex capture permission bound to an exact working copy;
 - bounded/redacted project capture and exact retained-evidence citations;
 - revision/applicability evidence;
 - project/session erasure and egress controls;
@@ -67,7 +70,8 @@ Today the implementation still exposes the focused continuity foundation that th
 - project-scoped Codex and Claude lifecycle integrations;
 - the current Agent Memory Desktop surfaces.
 
-See [Import a local project into a Brain](docs/project-import.md) for the M2 CLI workflow.
+See [Import a local project into a Brain](docs/project-import.md) for M2 and
+[Project Chronicle and Codex capture](docs/project-chronicle.md) for M3.
 
 Those names and the current UI are transition behavior, not permanent Project Brain ontology. General-purpose
 note editing, backlinks, Canvas, daily notes, and the retired notebook runtime remain out of scope. Historical

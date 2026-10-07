@@ -51,6 +51,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ley hook --host codex",
+            "timeout": 20,
+            "statusMessage": "Closing Ley project session"
+          }
+        ]
+      }
     ]
   }
 }

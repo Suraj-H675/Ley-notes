@@ -923,7 +923,10 @@ fn populated_v12_migration_preserves_m1_identity_and_exact_history() {
         )
         .unwrap();
     conn.execute_batch(
-        "DROP TABLE working_copy_import_heads;
+        "DROP TABLE chronicle_session_capture;
+                 DROP TABLE chronicle_capture_grants;
+                 DROP TABLE chronicle_episodes;
+                 DROP TABLE working_copy_import_heads;
         DROP TABLE working_copy_inventory;
         DROP TABLE import_source_paths;
         DROP TABLE import_erasure_fences;
@@ -933,7 +936,7 @@ fn populated_v12_migration_preserves_m1_identity_and_exact_history() {
     )
     .unwrap();
     drop(conn);
-    assert_eq!(f.store.schema_version().unwrap(), 13);
+    assert_eq!(f.store.schema_version().unwrap(), 14);
     assert_eq!(
         f.store.open_project_brain(&f.handle.project_id).unwrap(),
         before

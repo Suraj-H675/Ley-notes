@@ -1548,6 +1548,9 @@ mod tests {
                  DROP TABLE project_artifact_state;
                  DROP TABLE artifact_files;
                  DROP TABLE artifact_snapshots;
+                 DROP TABLE chronicle_session_capture;
+                 DROP TABLE chronicle_capture_grants;
+                 DROP TABLE chronicle_episodes;
                  DROP TABLE working_copy_import_heads;
                  DROP TABLE working_copy_inventory;
                  DROP TABLE import_source_paths;

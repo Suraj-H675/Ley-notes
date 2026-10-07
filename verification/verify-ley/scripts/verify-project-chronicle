@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+cd "$repo"
+
+cargo test -p ley-core --test chronicle --locked --offline
+cargo test -p ley-cli --test chronicle_hook_cli --locked --offline
+cargo test -p ley-desktop chronicle_control --locked --offline
+npm test -- --run src/features/agent-memory/ChronicleCaptureControl.test.tsx
+python3 -m json.tool integrations/codex/plugins/ley-memory/hooks/hooks.json >/dev/null

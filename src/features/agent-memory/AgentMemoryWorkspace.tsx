@@ -31,6 +31,7 @@ import { ProjectsHub } from "./ProjectsHub";
 import { ProjectOnboarding, ProjectSetupReady } from "./ProjectOnboarding";
 import { ProjectOverview } from "./ProjectOverview";
 import { HostIntegrationsPanel } from "./HostIntegrationsPanel";
+import { ChronicleCaptureControl } from "./ChronicleCaptureControl";
 import { UpdateControl } from "./UpdateControl";
 import {
   errorMessage,
@@ -1040,6 +1041,11 @@ function ProjectSettings({
       </section>
 
       <HostIntegrationsPanel projectPath={projectPath} />
+
+      <ChronicleCaptureControl
+        key={dashboard.overview.projectId}
+        projectId={dashboard.overview.projectId}
+      />
 
       <section aria-labelledby="integration-activity-title">
         <div className="mb-3 flex items-end justify-between gap-4">

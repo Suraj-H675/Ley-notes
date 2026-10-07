@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const CONTINUITY_DATABASE_FILE: &str = "continuity.sqlite3";
-pub const CONTINUITY_SCHEMA_VERSION: u32 = 13;
+pub const CONTINUITY_SCHEMA_VERSION: u32 = 14;
 pub const CONTINUITY_EVENT_LIMIT_BYTES: usize = 1_048_576;
 const CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES: usize = 1_048_576;
 const CONTINUITY_EGRESS_AUTHORITY_LOCK_FILE: &str = "continuity-egress.lock";
@@ -5321,6 +5321,7 @@ fn append_event_on_inner(
         .map_err(|error| database_error(path, error))?;
     let expected = event_from_input(input.clone());
     if changed == 1 {
+        crate::chronicle::normalize_event_on(connection, input, path)?;
         return Ok(ContinuityWrite {
             record: expected,
             created: true,
@@ -5967,6 +5968,12 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), LeyCoreError>
         transaction
             .execute_batch(crate::project_import::IMPORT_SCHEMA)
             .map_err(|error| database_error(path, error))?;
+    }
+    if version < 14 {
+        transaction
+            .execute_batch(crate::chronicle::CHRONICLE_SCHEMA)
+            .map_err(|error| database_error(path, error))?;
+        crate::chronicle::backfill_on(&transaction, path)?;
     }
     transaction
         .commit()
@@ -7465,7 +7472,10 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "DROP TABLE working_copy_import_heads;
+                "DROP TABLE chronicle_session_capture;
+                 DROP TABLE chronicle_capture_grants;
+                 DROP TABLE chronicle_episodes;
+                 DROP TABLE working_copy_import_heads;
                  DROP TABLE working_copy_inventory;
                  DROP TABLE import_source_paths;
                  DROP TABLE import_erasure_fences;
@@ -7573,7 +7583,10 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "DROP TABLE working_copy_import_heads;
+                "DROP TABLE chronicle_session_capture;
+                 DROP TABLE chronicle_capture_grants;
+                 DROP TABLE chronicle_episodes;
+                 DROP TABLE working_copy_import_heads;
                  DROP TABLE working_copy_inventory;
                  DROP TABLE import_source_paths;
                  DROP TABLE import_erasure_fences;

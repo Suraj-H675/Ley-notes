@@ -7,8 +7,9 @@ use ley_core::{
     ingest_project_with_continuity_transition, ingest_project_with_native_authority,
     initialize_project_retiring_bootstrap, learning_review_inbox_with_continuity_transition,
     list_learnings_with_continuity_transition, list_sessions_with_continuity_transition,
-    native_born_project_registration_exists, prepare_legacy_project_binding, preview_capture,
-    process_bootstrap_host_hook_for_agent_with_transition_registries,
+    native_born_project_registration_exists, preflight_codex_chronicle_hook,
+    prepare_legacy_project_binding, preview_capture,
+    process_bootstrap_host_hook_for_agent_with_transition_registries, process_codex_chronicle_hook,
     process_host_hook_for_agent_with_transition_registries,
     project_resume_context_with_continuity_transition, propose_learning_with_continuity_transition,
     read_external_connector_snapshot_with_registry, read_learning_with_continuity_transition,
@@ -20,16 +21,16 @@ use ley_core::{
     review_learning_with_continuity_transition, search_project_memory_with_continuity_transition,
     start_session_with_continuity_transition, validate_project_memory, AgentEgressPolicy,
     AgentEgressTarget, AgentHost, ApprovedSourceRegistry, BindingRegistry, BindingSource,
-    BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, CommandInput,
-    ConsolidationInboxLimits, ContextMountRegistry, ContinuityStore, CorrectLearningInput,
-    EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry, FinishSessionInput,
-    HostAgentContextRegistries, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
-    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits,
-    ProjectVaultBinding, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
-    RevisionCompatibility, SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult,
-    SpecificationRegistry, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
-    VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, ChronicleHookPreflight,
+    CommandInput, ConsolidationInboxLimits, ContextMountRegistry, ContinuityStore,
+    CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry,
+    FinishSessionInput, HostAgentContextRegistries, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
+    LearningTrustState, LeyCoreError, PolicyBundleRegistry, ProjectCatalog,
+    ProjectMemorySearchLimits, ProjectVaultBinding, ProposeLearningInput, RenameSessionInput,
+    ReviewLearningInput, RevisionCompatibility, SessionSource, SessionSourceKind, SessionStatus,
+    SessionWriteResult, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
+    TurnEvidenceOrigin, VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
     DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
     DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
     DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
@@ -93,7 +94,7 @@ fn brain(arguments: &[String]) -> Result<(), CliError> {
     use ley_core::{CreateProjectBrainInput, LocalImportInput, ProjectHandle};
     use std::collections::BTreeMap;
     use std::io::Write;
-    let command = arguments.first().map(String::as_str).ok_or_else(|| CliError::Usage("brain requires create, list, show, attach, import, contents, versions, version, or move-locator".into()))?;
+    let command = arguments.first().map(String::as_str).ok_or_else(|| CliError::Usage("brain requires create, list, show, attach, import, contents, versions, version, move-locator, sessions, history, or capture-state".into()))?;
     let mut values = BTreeMap::new();
     let mut raw = false;
     let mut index = 1;
@@ -103,7 +104,7 @@ fn brain(arguments: &[String]) -> Result<(), CliError> {
             "--json" => {}
             "--raw" => raw = true,
             "--project" | "--locator" | "--root" | "--request" | "--source" | "--version"
-            | "--name" => {
+            | "--name" | "--session" | "--after" | "--max" => {
                 index += 1;
                 if values
                     .insert(option, required_value(arguments, index, option)?)
@@ -125,6 +126,9 @@ fn brain(arguments: &[String]) -> Result<(), CliError> {
         "contents" => &["--project", "--locator"],
         "versions" => &["--project", "--source"],
         "version" => &["--project", "--source", "--version"],
+        "sessions" => &["--project", "--max"],
+        "history" => &["--project", "--session", "--after", "--max"],
+        "capture-state" => &["--project", "--locator"],
         other => return Err(CliError::Usage(format!("unknown brain command {other}"))),
     };
     for option in values.keys() {
@@ -208,6 +212,43 @@ fn brain(arguments: &[String]) -> Result<(), CliError> {
                 required("--root")?,
                 required("--request")?,
             )?)
+            .expect("serializable"),
+            "sessions" => {
+                let max = values
+                    .get("--max")
+                    .map(|value| value.parse::<usize>())
+                    .transpose()
+                    .map_err(|_| CliError::Usage("brain sessions --max must be an integer".into()))?
+                    .unwrap_or(100);
+                serde_json::to_value(store.chronicle_sessions(project, 0, max)?)
+                    .expect("serializable")
+            }
+            "history" => {
+                let after = values
+                    .get("--after")
+                    .map(|value| value.parse::<u64>())
+                    .transpose()
+                    .map_err(|_| {
+                        CliError::Usage("brain history --after must be an integer".into())
+                    })?
+                    .unwrap_or(0);
+                let max = values
+                    .get("--max")
+                    .map(|value| value.parse::<usize>())
+                    .transpose()
+                    .map_err(|_| CliError::Usage("brain history --max must be an integer".into()))?
+                    .unwrap_or(100);
+                serde_json::to_value(store.chronicle_history(
+                    project,
+                    Some(required("--session")?),
+                    after,
+                    max,
+                )?)
+                .expect("serializable")
+            }
+            "capture-state" => serde_json::to_value(
+                store.chronicle_capture_state(project, required("--locator")?)?,
+            )
             .expect("serializable"),
             _ => unreachable!(),
         }
@@ -1317,6 +1358,37 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     }
     let host = host.ok_or_else(|| CliError::Usage("hook requires --host HOST".to_owned()))?;
     let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+    let continuity_store = ContinuityStore::system_default()?;
+    let continuity_store_present = match std::fs::symlink_metadata(continuity_store.path()) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: continuity_store.path().to_path_buf(),
+                source,
+            }
+            .into())
+        }
+    };
+
+    if host == AgentHost::Codex && continuity_store_present {
+        match preflight_codex_chronicle_hook(&project, &continuity_store)? {
+            ChronicleHookPreflight::CaptureEnabled => {
+                let payload = read_hook_payload()?;
+                let _ = process_codex_chronicle_hook(&project, payload, &continuity_store)?;
+                println!("{{}}");
+                return Ok(());
+            }
+            ChronicleHookPreflight::CaptureDisabled { .. } => {
+                // Project Brain attachment/import is not capture permission. Once a path is
+                // an M3 Brain, an absent/revoked grant must not fall through to the legacy
+                // structured-session recorder.
+                println!("{{}}");
+                return Ok(());
+            }
+            ChronicleHookPreflight::NotProjectBrain => {}
+        }
+    }
 
     // Hooks are intended to be installable at user/plugin scope. Projects that
     // have not explicitly initialized usable Ley continuity must remain untouched
@@ -1343,15 +1415,14 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
             let payload = read_hook_payload()?;
             let egress_registry = EgressPolicyRegistry::system_default()
                 .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
-            let continuity_store = ContinuityStore::system_default()
-                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            let continuity_store = &continuity_store;
             let result = process_bootstrap_host_hook_for_agent_with_transition_registries(
                 &project,
                 host,
                 payload,
                 &bootstrap,
                 &egress_registry,
-                &continuity_store,
+                continuity_store,
                 egress_target,
             )
             .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
@@ -1369,7 +1440,6 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     }
     let payload = read_hook_payload()?;
     let egress_registry = EgressPolicyRegistry::system_default()?;
-    let continuity_store = ContinuityStore::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
     let policy_bundle_registry = PolicyBundleRegistry::system_default()?;

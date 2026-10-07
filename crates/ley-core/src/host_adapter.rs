@@ -559,7 +559,7 @@ fn process_host_hook_with_session_transition(
     }
 }
 
-fn serialize_tool_response(value: Option<&Value>) -> Result<String, LeyCoreError> {
+pub(crate) fn serialize_tool_response(value: Option<&Value>) -> Result<String, LeyCoreError> {
     let Some(value) = value else {
         return Ok(String::new());
     };

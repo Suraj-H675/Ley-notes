@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+mod chronicle_control;
 mod host_integrations;
 mod runtime;
 
@@ -2215,7 +2216,10 @@ pub fn run() {
             prepare_agent_runtime,
             read_agent_host_integrations,
             connect_agent_host,
-            disconnect_agent_host
+            disconnect_agent_host,
+            chronicle_control::read_chronicle_capture_targets,
+            chronicle_control::request_chronicle_capture,
+            chronicle_control::revoke_chronicle_capture
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ley");

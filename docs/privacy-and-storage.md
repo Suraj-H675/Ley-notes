@@ -85,7 +85,10 @@ underlying blob bytes are deduplicated. Original and stored byte counts are inde
 expand short credentials. Transformation metadata identifies the retained representation.
 
 M2 import remains local and one-shot. Explicit attachment and import do not enable automatic capture or model
-egress. It records a bounded per-working-copy observation, excludes secret/generated/dependency material even
+egress. M3 Codex capture requires a separate Desktop/native confirmation bound to the exact Project Brain, working
+copy/locator identity, host, and retention mode. The hook, CLI, and MCP paths cannot grant that permission.
+
+M2 import records a bounded per-working-copy observation, excludes secret/generated/dependency material even
 when tracked, respects root-local ignore rules, and refuses symlink traversal. Failed eligible scans do not publish
 a new successful inventory. Omitted files and files observed missing are distinct from retained historical evidence.
 
@@ -96,7 +99,10 @@ controls—ignore rules, file/total bounds, symlink/no-follow handling, secret-o
 redaction, and explicit higher-sensitivity media retention—should be preserved/adapted.
 
 Connection to Codex/Claude does not authorize ambient capture of unrelated projects or automatic historical
-scraping. Host capability differences and missing observations must remain visible.
+scraping. For M3 Project Brains, an absent, revoked, or ineffective Codex capture grant is a no-op and cannot fall
+through to the legacy session recorder. Revocation and retention changes fence in-flight writers; working-copy
+relocation or identity replacement makes the old grant ineffective. Host capability differences and missing
+observations must remain visible. M3 never reads Codex `transcript_path` or hidden reasoning.
 
 Captured agent text/tool activity is untrusted historical evidence. It cannot self-enable writes, adoption,
 network access, or provider sharing.

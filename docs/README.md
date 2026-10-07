@@ -22,6 +22,8 @@ Read first:
    migration obligations, and the locked M1 input model.
 3. `architecture.md` — current implementation foundation and transition boundary.
 4. `privacy-and-storage.md` — privacy/storage requirements and current transition behavior.
+5. `project-import.md` — implemented M2 deterministic SourceVersion import.
+6. `project-chronicle.md` — implemented M3 canonical Chronicle and Codex capture boundary.
 
 Current/transition operational references:
 

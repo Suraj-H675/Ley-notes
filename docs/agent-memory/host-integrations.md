@@ -98,6 +98,14 @@ The packaged MCP process uses the default `cloud` egress target and enables sess
 
 For an initialized project, the package's normal MCP contract is the same four-tool surface taught by its Skill: `ley_brief`, `ley_search`, `ley_evidence`, and `ley_checkpoint`. `ley_checkpoint` appears only because the package starts MCP with `--allow-session-writes`. `ley_compile_context` is not a normal-project alias; it exists only in the explicit Bootstrap Context mode described below.
 
+### M3 Project Brain Codex capture
+
+Project Brains now have a separate M3 Codex-capture route. **Connecting Codex is not capture permission.** The user must open Project settings → Codex activity capture and confirm the exact Project Brain, authorized working copy, host, and retention mode through Ley Desktop's native confirmation. Attachment/import and model-sharing authority remain separate. The hook/CLI/MCP surfaces cannot grant this permission.
+
+When `ley hook --host codex` runs inside a Project Brain working copy, it preflights that canonical capture boundary before the older continuity adapter. An active grant records only supported observable hook events into the Project Chronicle and returns `{}`; M4 `$ley` orientation/retrieval is not implemented yet. A Brain with an absent, revoked, moved, replaced, or otherwise ineffective capture grant also returns `{}` and **does not fall through to legacy session capture**. The current Project Brain adapter supports `SessionStart`, `UserPromptSubmit`, Bash `PostToolUse`, `Stop`, and `SessionEnd`. It never reads `transcript_path` or hidden reasoning. Stable Codex turn/tool identities are used for retry deduplication when available, per-session Episode ordering is explicit, and gaps disclose unsupported/missing observations. A returned Bash result remains an observed result, never proof that the command, test, or requested work succeeded.
+
+The paragraphs below describe the retained focused-continuity compatibility path used when the working directory is not routed through a Project Brain capture boundary.
+
 Lifecycle hooks carry routine session continuity. `SessionStart` establishes/reuses the stable Ley session and returns only session/retrieval/checkpoint guidance; it does not auto-inject prior session, handoff, learning, Specification, or other historical project bodies. A same-session interrupted window may still add a bounded body-free recovery count/state signal. `UserPromptSubmit` records the bounded prompt and returns only session/capture/checkpoint guidance, `PostToolUse` records bounded/redacted Bash supporting evidence, and `Stop` captures the paired bounded response. A Codex `PostToolUse` event is recorded as `returned`; it does **not** prove the command, test, or requested work succeeded. Initialized-project `UserPromptSubmit` does not compile or inject task-specific project history.
 
 Call `ley_brief` when prior project continuity would materially help the current task; use `ley_search` for deeper bounded history; carry exact citations into `ley_evidence`; and use `ley_checkpoint` only for meaningful supported state in the current hook-provided session. Do not call Brief reflexively on every turn. In canonical native mode, granular session/recovery/context-utility/learning/connector tools are intentionally not advertised. Older projects may expose legacy session inspection surfaces, but the shape-specific recovery verifiers and writers are retired; persisted recovery events remain available through replay and provenance reads.
@@ -140,7 +148,9 @@ Retained mounts/references/scopes/bundles/connectors and finer-grained egress an
 
 ## What automatic capture does
 
-In Structured and Full Evidence modes, the adapter stores:
+For canonical M3 Project Brain Codex capture, see [Project Chronicle and Codex capture](../project-chronicle.md). Its permission, lifecycle, gap, and retention semantics are stricter than the older compatibility recorder and it includes `SessionEnd` for explicit session closure.
+
+The remainder of this section describes the focused-continuity compatibility adapter still used outside the Project Brain M3 route. In Structured and Full Evidence modes, that adapter stores:
 
 - a generated host-session name and continuity goal;
 - the stable Ley session ID;

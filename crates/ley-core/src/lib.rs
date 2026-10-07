@@ -1,4 +1,15 @@
 mod bounded_reader;
+mod chronicle;
+mod chronicle_codex;
+pub use chronicle::{
+    ChronicleCaptureGrant, ChronicleCapturePreview, ChronicleCaptureState, ChronicleObservation,
+    ChroniclePage, ChronicleSession, Episode, EpisodeEvidenceBasis, EpisodeKind,
+    MAX_CHRONICLE_PAGE, MAX_CHRONICLE_SESSION_BYTES, MAX_CHRONICLE_SESSION_EVENTS,
+};
+pub use chronicle_codex::{
+    preflight_codex_chronicle_hook, process_codex_chronicle_hook, ChronicleHookPreflight,
+    ChronicleHookResult,
+};
 mod project_import;
 pub use project_import::{
     ContentsEntry, ImportAttempt, ImportReceipt, InventoryState, LocalImportInput, ProjectContents,
