@@ -105,6 +105,10 @@ fn codex_prompt_hook_is_bounded_capture_only() {
         mcp["mcpServers"]["ley"]["args"],
         serde_json::json!(["mcp", ".", "--allow-session-writes"])
     );
+    assert_eq!(
+        mcp["mcpServers"]["ley"]["env_vars"],
+        serde_json::json!(["XDG_CONFIG_HOME"])
+    );
     let hooks = json(plugin.join("hooks/hooks.json"));
     let handler = &hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0];
 
@@ -119,15 +123,20 @@ fn codex_prompt_hook_is_bounded_capture_only() {
         "Saving bounded Ley Bash evidence"
     );
     assert_portable(plugin.join("hooks/hooks.json"));
+    let manifest = json(plugin.join(".codex-plugin/plugin.json"));
+    assert_eq!(manifest["interface"]["defaultPrompt"], "$ley");
+    let skill_path = plugin.join("skills/ley/SKILL.md");
+    let skill = fs::read_to_string(&skill_path).expect("packaged Codex Ley skill");
+    assert!(skill.contains("For `$ley` alone, call `ley_brief` with no task."));
+    assert!(skill.contains("pass the natural-language question as"));
+    assert!(skill.contains("Continue work in this session without launching"));
+    assert_portable(skill_path);
 }
 
 #[test]
-fn packaged_skills_teach_explicit_task_retrieval_without_weak_memory_padding() {
+fn claude_skill_teaches_explicit_task_retrieval_without_weak_memory_padding() {
     let root = repository_root();
-    for path in [
-        root.join("integrations/claude-code/ley-memory/skills/ley-memory/SKILL.md"),
-        root.join("integrations/codex/plugins/ley-memory/skills/ley/SKILL.md"),
-    ] {
+    for path in [root.join("integrations/claude-code/ley-memory/skills/ley-memory/SKILL.md")] {
         let skill = fs::read_to_string(&path).expect("packaged Ley skill");
         let normalized_skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
         for canonical in ["ley_brief", "ley_search", "ley_evidence", "ley_checkpoint"] {

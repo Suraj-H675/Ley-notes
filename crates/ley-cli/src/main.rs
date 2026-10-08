@@ -18,26 +18,28 @@ use ley_core::{
     record_session_prompt_with_continuity_transition,
     record_session_response_with_continuity_transition, register_native_born_project,
     remove_external_connector_with_registry, rename_session_with_continuity_transition,
-    review_learning_with_continuity_transition, search_project_memory_with_continuity_transition,
-    start_session_with_continuity_transition, validate_project_memory, AgentEgressPolicy,
-    AgentEgressTarget, AgentHost, ApprovedSourceRegistry, BindingRegistry, BindingSource,
-    BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, ChronicleHookPreflight,
-    CommandInput, ConsolidationInboxLimits, ContextMountRegistry, ContinuityStore,
-    CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry,
-    FinishSessionInput, HostAgentContextRegistries, KnowledgeScopeRegistry, LearningActor,
-    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
-    LearningTrustState, LeyCoreError, PolicyBundleRegistry, ProjectCatalog,
-    ProjectMemorySearchLimits, ProjectVaultBinding, ProposeLearningInput, RenameSessionInput,
-    ReviewLearningInput, RevisionCompatibility, SessionSource, SessionSourceKind, SessionStatus,
-    SessionWriteResult, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
-    TurnEvidenceOrigin, VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
-    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    resolve_brain_workspace, review_learning_with_continuity_transition,
+    search_project_memory_with_continuity_transition, start_session_with_continuity_transition,
+    validate_project_memory, AgentEgressPolicy, AgentEgressTarget, AgentHost,
+    ApprovedSourceRegistry, BindingRegistry, BindingSource, BootstrapSpecificationRegistry,
+    BrainReadBinding, BrainWorkspaceResolution, CaptureMode, CheckpointInput,
+    ChronicleHookPreflight, CommandInput, ConsolidationInboxLimits, ContextMountRegistry,
+    ContinuityStore, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
+    ExternalConnectorRegistry, FinishSessionInput, HostAgentContextRegistries,
+    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
+    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
+    PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits, ProjectVaultBinding,
+    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
+    SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult, SpecificationRegistry,
+    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
+    VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_mcp::{
-    run_bootstrap_stdio_with_egress_target, run_stdio_with_egress_target, run_unavailable_stdio,
+    run_bootstrap_stdio_with_egress_target, run_brain_read_stdio, run_stdio_with_egress_target,
+    run_unavailable_stdio, run_workspace_preview_stdio,
 };
 use std::env;
 use std::io::Read;
@@ -270,16 +272,60 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
     match command {
         "list" => {
             let mut project = None;
+            let mut project_id = None;
             let mut json = false;
-            for argument in &arguments[1..] {
-                match argument.as_str() {
+            let mut index = 1;
+            while index < arguments.len() {
+                match arguments[index].as_str() {
                     "--json" => json = true,
+                    "--project-id" => {
+                        if project_id.is_some() {
+                            return Err(CliError::Usage(
+                                "--project-id may be specified only once".into(),
+                            ));
+                        }
+                        index += 1;
+                        project_id = Some(
+                            required_value(arguments, index, "--project-id")?.to_owned(),
+                        );
+                    }
+                    value if value.starts_with("--project-id=") => {
+                        if project_id.is_some() {
+                            return Err(CliError::Usage(
+                                "--project-id may be specified only once".into(),
+                            ));
+                        }
+                        project_id = Some(value.trim_start_matches("--project-id=").to_owned());
+                    }
                     value if value.starts_with('-') => {
                         return Err(CliError::Usage(format!("unknown option '{value}'")))
                     }
                     value if project.is_none() => project = Some(PathBuf::from(value)),
                     value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
                 }
+                index += 1;
+            }
+            if let Some(project_id) = project_id {
+                if project.is_some() {
+                    return Err(CliError::Usage(
+                        "egress list accepts either a workspace path or --project-id, not both".into(),
+                    ));
+                }
+                let store = ContinuityStore::system_default()?;
+                let brain = store.open_project_brain(&project_id)?;
+                let result = serde_json::json!({
+                    "projectId": brain.identity.project_id,
+                    "projectPolicy": store.project_egress_policy(&project_id)?,
+                    "authorityReady": store.project_egress_authority_ready(&project_id)?,
+                });
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result).expect("egress policy is serializable"));
+                } else {
+                    println!("Project: {}", brain.identity.project_id);
+                    println!("Project egress: {}", result["projectPolicy"]);
+                    println!("Authority ready: {}", result["authorityReady"]);
+                }
+                return Ok(());
             }
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
@@ -321,6 +367,71 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         "project" => {
+            if arguments[1..].iter().any(|argument| {
+                argument == "--project-id" || argument.starts_with("--project-id=")
+            }) {
+                let policy = AgentEgressPolicy::parse(arguments.get(1).ok_or_else(|| {
+                    CliError::Usage(
+                        "egress project requires POLICY [PROJECT] or --project-id ID".into(),
+                    )
+                })?)?;
+                let mut project_id = None;
+                let mut workspace = None;
+                let mut json = false;
+                let mut index = 2;
+                while index < arguments.len() {
+                    match arguments[index].as_str() {
+                        "--project-id" => {
+                            if project_id.is_some() {
+                                return Err(CliError::Usage(
+                                    "--project-id may be specified only once".into(),
+                                ));
+                            }
+                            index += 1;
+                            project_id = Some(
+                                required_value(arguments, index, "--project-id")?.to_owned(),
+                            );
+                        }
+                        value if value.starts_with("--project-id=") => {
+                            if project_id.is_some() {
+                                return Err(CliError::Usage(
+                                    "--project-id may be specified only once".into(),
+                                ));
+                            }
+                            project_id = Some(value.trim_start_matches("--project-id=").to_owned());
+                        }
+                        "--json" => json = true,
+                        value if value.starts_with('-') => {
+                            return Err(CliError::Usage(format!("unknown option '{value}'")))
+                        }
+                        value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                        value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                    }
+                    index += 1;
+                }
+                if workspace.is_some() {
+                    return Err(CliError::Usage(
+                        "egress project accepts either a workspace path or --project-id, not both".into(),
+                    ));
+                }
+                let project_id = project_id.expect("selector was detected");
+                let store = ContinuityStore::system_default()?;
+                let brain = store.open_project_brain(&project_id)?;
+                let previous = store.project_egress_policy(&project_id)?;
+                store.set_project_egress_policy(&project_id, policy)?;
+                let result = serde_json::json!({
+                    "projectId": brain.identity.project_id,
+                    "previousPolicy": previous,
+                    "projectPolicy": store.project_egress_policy(&project_id)?,
+                });
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result).expect("egress policy is serializable"));
+                } else {
+                    println!("Project: {}", brain.identity.project_id);
+                    println!("Project egress: {}", result["projectPolicy"]);
+                }
+                return Ok(());
+            }
             let (policy, project, json) = parse_egress_scope_arguments(
                 &arguments[1..],
                 "egress project requires POLICY [PROJECT]",
@@ -2294,10 +2405,39 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
     let mut allow_learning_proposals = false;
     let mut egress_target = AgentEgressTarget::Cloud;
     let mut egress_target_set = false;
+    let mut project_id: Option<String> = None;
+    let mut source_only = false;
+    let mut workspace_seen = false;
+    let mut vault_seen = false;
     let mut binding_arguments_only = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
+            "--project-id" => {
+                if project_id.is_some() {
+                    return Err(CliError::Usage(
+                        "--project-id may be specified only once".to_owned(),
+                    ));
+                }
+                index += 1;
+                project_id = Some(required_value(arguments, index, "--project-id")?.to_owned());
+            }
+            value if value.starts_with("--project-id=") => {
+                if project_id.is_some() {
+                    return Err(CliError::Usage(
+                        "--project-id may be specified only once".to_owned(),
+                    ));
+                }
+                project_id = Some(value.trim_start_matches("--project-id=").to_owned());
+            }
+            "--source-only" => {
+                if source_only {
+                    return Err(CliError::Usage(
+                        "--source-only may be specified only once".to_owned(),
+                    ));
+                }
+                source_only = true;
+            }
             "--allow-session-writes" => {
                 if allow_session_writes {
                     return Err(CliError::Usage(
@@ -2335,15 +2475,104 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
                 egress_target = AgentEgressTarget::parse(value)?;
                 egress_target_set = true;
             }
-            _ => binding_arguments_only.push(arguments[index].clone()),
+            "--vault" => {
+                vault_seen = true;
+                binding_arguments_only.push(arguments[index].clone());
+                index += 1;
+                binding_arguments_only
+                    .push(required_value(arguments, index, "--vault")?.to_owned());
+            }
+            value if value.starts_with("--vault=") => {
+                vault_seen = true;
+                binding_arguments_only.push(arguments[index].clone());
+            }
+            value => {
+                if !value.starts_with('-') {
+                    workspace_seen = true;
+                }
+                binding_arguments_only.push(arguments[index].clone());
+            }
         }
         index += 1;
     }
+
+    if source_only && project_id.is_none() {
+        return Err(CliError::Usage(
+            "--source-only requires an explicit --project-id".to_owned(),
+        ));
+    }
+    if source_only {
+        if workspace_seen || vault_seen || binding_arguments_only.iter().any(|arg| arg == "--json")
+        {
+            return Err(CliError::Usage(
+                "--source-only cannot be combined with a workspace, legacy vault, or --json"
+                    .to_owned(),
+            ));
+        }
+        if let Some(argument) = binding_arguments_only.first() {
+            return Err(CliError::Usage(format!(
+                "unexpected option '{argument}' with --source-only"
+            )));
+        }
+        let store = ContinuityStore::system_default()?;
+        let binding = BrainReadBinding::for_project_id(
+            store,
+            project_id
+                .as_deref()
+                .expect("validated source-only Project ID"),
+            egress_target,
+        )?;
+        return run_brain_read_stdio(binding).map_err(CliError::Mcp);
+    }
+
+    if let Some(project_id) = project_id.as_deref() {
+        if !workspace_seen {
+            return Err(CliError::Usage(
+                "--project-id with a repository requires an explicit workspace path; use --source-only for a source-only Brain".to_owned(),
+            ));
+        }
+        if vault_seen {
+            return Err(CliError::Usage(
+                "Project Brain routing does not accept a legacy --vault".to_owned(),
+            ));
+        }
+        let parsed = binding_arguments(&binding_arguments_only, false)?;
+        if parsed.json {
+            return Err(CliError::Usage(
+                "mcp uses stdout for the protocol and does not support --json".to_owned(),
+            ));
+        }
+        let store = ContinuityStore::system_default()?;
+        let binding = match resolve_brain_workspace(store, &parsed.project, egress_target)? {
+            BrainWorkspaceResolution::Bound(binding) if binding.project_id() == project_id => {
+                binding
+            }
+            BrainWorkspaceResolution::Bound(_) => {
+                return Err(CliError::Usage(
+                    "the workspace is authorized for a different Project Brain".to_owned(),
+                ));
+            }
+            BrainWorkspaceResolution::NotAssociated => {
+                return Err(CliError::Usage(
+                    "the workspace has no authorized locator for the selected Project Brain"
+                        .to_owned(),
+                ));
+            }
+        };
+        return run_brain_read_stdio(binding).map_err(CliError::Mcp);
+    }
+
     let parsed = binding_arguments(&binding_arguments_only, false)?;
     if parsed.json {
         return Err(CliError::Usage(
             "mcp uses stdout for the protocol and does not support --json".to_owned(),
         ));
+    }
+    let continuity_store = ContinuityStore::system_default()?;
+    if let BrainWorkspaceResolution::Bound(binding) =
+        resolve_brain_workspace(continuity_store, &parsed.project, egress_target)?
+    {
+        return run_brain_read_stdio(binding).map_err(CliError::Mcp);
     }
     let registry = BindingRegistry::system_default()?;
     let vault_path = match registry.resolve(&parsed.project, parsed.vault.as_deref()) {
@@ -2375,10 +2604,8 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
                 .authority_file_present()
                 .map_err(|_| CliError::BootstrapAuthorityUnavailable)?
             {
-                return run_unavailable_stdio(
-                    "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification for read-only task context.",
-                )
-                .map_err(CliError::Mcp);
+                return run_workspace_preview_stdio(parsed.project)
+                    .map_err(CliError::Mcp);
             }
             let attached = bootstrap
                 .list(&parsed.project)
@@ -2387,10 +2614,7 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
                 return run_bootstrap_stdio_with_egress_target(parsed.project, egress_target)
                     .map_err(CliError::Mcp);
             }
-            return run_unavailable_stdio(
-                "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification for read-only task context.",
-            )
-            .map_err(CliError::Mcp);
+            return run_workspace_preview_stdio(parsed.project).map_err(CliError::Mcp);
         }
         Err(LeyCoreError::NotDirectory(_)) => {
             return run_unavailable_stdio(
@@ -3741,9 +3965,10 @@ fn print_help() {
     );
     println!("  ley mcp [path] [--vault EXISTING_LEGACY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals] [--egress-target cloud|local]");
+    println!("  ley mcp --project-id PROJECT_ID --source-only [--egress-target cloud|local]");
     println!("      # --allow-learning-proposals is compatibility-only for older projects");
-    println!("  ley egress list [PROJECT] [--json]");
-    println!("  ley egress project POLICY [PROJECT] [--json]");
+    println!("  ley egress list [PROJECT | --project-id PROJECT_ID] [--json]");
+    println!("  ley egress project POLICY [PROJECT | --project-id PROJECT_ID] [--json]");
     println!("  ley egress specification SPECIFICATION_ID agent-ok [PROJECT] [--json]  # clear legacy override");
     println!("  ley egress mount MOUNT_ID agent-ok [PROJECT] [--json]  # clear legacy override");
     println!(

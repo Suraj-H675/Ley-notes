@@ -6,6 +6,9 @@
         "mcp",
         ".",
         "--allow-session-writes"
+      ],
+      "env_vars": [
+        "XDG_CONFIG_HOME"
       ]
     }
   }

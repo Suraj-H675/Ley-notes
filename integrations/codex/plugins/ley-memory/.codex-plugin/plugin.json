@@ -1,19 +1,23 @@
 {
   "name": "ley-memory",
   "version": "0.2.1",
-  "description": "Private, local project memory and cited continuity across Codex sessions.",
+  "description": "Local Project Brain orientation, natural-language retrieval, and exact cited evidence for Codex.",
   "author": {
     "name": "Suraj"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Ley Memory",
-    "shortDescription": "Local project memory across Codex sessions.",
-    "longDescription": "Ley Memory connects Codex to a user-owned local vault through MCP, lifecycle hooks, and the Ley skill. It resumes bounded cited context, captures structured decisions and problem-solving, saves a redacted fallback, and keeps learning approval under user control.",
+    "displayName": "Ley",
+    "shortDescription": "Orient and continue from a local Project Brain.",
+    "longDescription": "Ley connects Codex to one explicitly selected local Project Brain through MCP, supported lifecycle capture, and the native $ley skill. It supplies bounded requirements, decisions, failed attempts, verification, and unfinished work with exact retained evidence and honest applicability warnings. Unregistered workspaces receive a local scope preview before any creation or attachment permission.",
     "developerName": "Suraj",
     "category": "Productivity",
-    "capabilities": ["MCP", "Lifecycle hooks", "Agent skill"],
-    "defaultPrompt": "Use @Ley to resume this project's durable local context, continue its current Ley session, and checkpoint meaningful work before responding."
+    "capabilities": [
+      "MCP",
+      "Lifecycle hooks",
+      "Agent skill"
+    ],
+    "defaultPrompt": "$ley"
   },
   "mcpServers": "./.mcp.json"
 }

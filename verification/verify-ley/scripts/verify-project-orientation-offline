@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Exercise the real local CLI/MCP routes. This is not native agent acceptance."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import queue
+import stat
+import subprocess
+import tempfile
+import threading
+import time
+
+
+class Mcp:
+    def __init__(self, binary, arguments, env, cwd, proof):
+        self.events = proof.with_suffix('.jsonl').open('x')
+        self.stderr = proof.with_suffix('.stderr').open('x')
+        self.inbox = queue.Queue()
+        self.serial = 0
+        self.proc = subprocess.Popen([str(binary), 'mcp', *arguments], cwd=cwd, env=env,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=self.stderr, text=True, bufsize=1)
+        self.reader = threading.Thread(target=self.read_output)
+        self.reader.start()
+        try:
+            self.request('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
+                                       'clientInfo': {'name': 'verify-ley-offline', 'version': '1'}})
+            self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        except BaseException:
+            self.close()
+            raise
+
+    def read_output(self):
+        for line in self.proc.stdout:
+            self.inbox.put(line)
+        self.inbox.put(None)
+
+    def send(self, message):
+        self.events.write(json.dumps({'direction': 'client', 'message': message}) + '\n')
+        self.events.flush()
+        self.proc.stdin.write(json.dumps(message) + '\n')
+        self.proc.stdin.flush()
+
+    def request(self, method, params=None):
+        self.serial += 1
+        request_id = self.serial
+        self.send({'jsonrpc': '2.0', 'id': request_id, 'method': method, 'params': params or {}})
+        deadline = time.monotonic() + 30
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(method)
+            line = self.inbox.get(timeout=remaining)
+            if line is None:
+                raise RuntimeError(f'MCP exited before {method} response, exit {self.proc.poll()}')
+            message = json.loads(line)
+            self.events.write(json.dumps({'direction': 'server', 'message': message}) + '\n')
+            self.events.flush()
+            if message.get('id') == request_id:
+                if 'error' in message:
+                    raise RuntimeError(json.dumps(message['error']))
+                return message['result']
+
+    def tools(self):
+        return {tool['name'] for tool in self.request('tools/list')['tools']}
+
+    def call(self, name, arguments, rejected=False):
+        result = self.request('tools/call', {'name': name, 'arguments': arguments})
+        assert bool(result.get('isError', False)) == rejected, result
+        return result.get('structuredContent') or json.loads(result['content'][0]['text'])
+
+    def close(self):
+        self.proc.stdin.close()
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(timeout=3)
+        self.reader.join(timeout=3)
+        self.proc.stdout.close()
+        self.events.close()
+        self.stderr.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *unused):
+        self.close()
+
+
+def verify(binary, proof):
+    root = Path(__file__).resolve().parents[3]
+    record = {'status': 'running', 'binary': str(binary),
+              'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+              'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
+              'dirtyState': subprocess.check_output(['git', 'status', '--short'], cwd=root, text=True),
+              'scope': 'Actual disposable CLI and stdio MCP only; no Codex process or model',
+              'nativeAcceptance': 'NOT PROVEN', 'passed': [], 'cleanup': False}
+    try:
+        with tempfile.TemporaryDirectory(prefix='ley-m4-offline-') as temporary:
+            scratch = Path(temporary)
+            record['scratch'] = str(scratch)
+            env = os.environ.copy()
+            env.pop('LEY_EVAL_PRIVATE_ROOT', None)
+            for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'),
+                              ('XDG_DATA_HOME', 'data')]:
+                path = scratch / name
+                path.mkdir(mode=0o700)
+                env[key] = str(path)
+            env['GIT_CONFIG_NOSYSTEM'] = '1'
+            env['GIT_CONFIG_GLOBAL'] = '/dev/null'
+            workspace = scratch / 'project'
+            workspace.mkdir()
+            requirement = '# Requirement\nDurable offline SQLite FIFO queue. Avoid Redis service dependency.\n'
+            (workspace / 'REQUIREMENTS.md').write_text(requirement)
+            (workspace / '.env').write_text('EXCLUDED_SECRET_BEACON\n')
+
+            def cli(label, *arguments, rejected=False):
+                command = [str(binary), *map(str, arguments)]
+                result = subprocess.run(command, cwd=workspace, env=env, capture_output=True,
+                                        text=True, timeout=30)
+                (proof / f'{label}.json').write_text(json.dumps({
+                    'argv': command, 'exitCode': result.returncode,
+                    'stdout': result.stdout, 'stderr': result.stderr}, indent=2) + '\n')
+                assert (result.returncode != 0) == rejected, result.stderr
+                return None if rejected else json.loads(result.stdout)
+
+            def mcp(label, *arguments):
+                return Mcp(binary, list(arguments), env, workspace, proof / label)
+
+            with mcp('unregistered', str(workspace)) as server:
+                assert server.tools() == {'ley_preview_workspace'}
+                preview = server.call('ley_preview_workspace', {})
+                assert preview['requiresUserPermissionBeforeCreateOrAttach']
+                assert not preview['createsOrAttachesBrain']
+                assert 'EXCLUDED_SECRET_BEACON' not in json.dumps(preview)
+            assert not (workspace / '.ley').exists()
+            assert not list((scratch / 'config').rglob('continuity.sqlite3'))
+            record['passed'].append('unregistered-preview-no-creation')
+
+            created = cli('create', 'brain', 'create', '--name', 'M4 offline fixture',
+                          '--request', 'm4-create', '--json')
+            project_id = created['identity']['projectId']
+            other = cli('other-create', 'brain', 'create', '--name', 'UNRELATED_PROJECT_BEACON',
+                        '--request', 'other-create', '--json')
+            with mcp('source-only', '--project-id', project_id, '--source-only') as server:
+                assert server.tools() == {'ley_brief', 'ley_search', 'ley_evidence'}
+                server.call('ley_brief', {}, rejected=True)
+                initial_policy = cli('sharing-default', 'egress', 'list', '--project-id', project_id,
+                                    '--json')
+                assert initial_policy['projectPolicy'] == 'never-send'
+                cli('sharing-grant', 'egress', 'project', 'agent-ok', '--project-id', project_id, '--json')
+                granted_policy = cli('sharing-readback', 'egress', 'list', '--project-id', project_id,
+                                     '--json')
+                assert granted_policy['projectPolicy'] == 'agent-ok'
+                brief = server.call('ley_brief', {})
+                assert brief['projectId'] == project_id
+                assert brief['mode'] == 'orientation' and brief['currentSession'] is None
+                assert 'UNRELATED_PROJECT_BEACON' not in json.dumps(brief)
+                server.call('ley_brief', {'maxResults': 13}, rejected=True)
+                cli('sharing-revoke', 'egress', 'project', 'never-send', '--project-id', project_id, '--json')
+                server.call('ley_brief', {}, rejected=True)
+                cli('sharing-regrant', 'egress', 'project', 'agent-ok', '--project-id', project_id, '--json')
+            record['passed'].append('source-only-exact-project-bounds-and-live-egress')
+            cli('source-only-flag-required', 'mcp', '--project-id', project_id, rejected=True)
+            cli('source-only-unknown-option', 'mcp', '--project-id', project_id,
+                '--source-only', '--not-a-supported-option', rejected=True)
+            cli('unattached-project-selector', 'mcp', '--project-id', project_id,
+                str(workspace), rejected=True)
+
+            attached = cli('attach', 'brain', 'attach', '--project', project_id,
+                           '--root', workspace, '--request', 'm4-attach', '--json')
+            locator_id = attached['locator']['locatorId']
+            cli('import', 'brain', 'import', '--project', project_id, '--locator', locator_id,
+                '--root', workspace, '--request', 'm4-import', '--json')
+            with mcp('workspace-project-id', '--project-id', project_id, str(workspace)) as server:
+                assert server.tools() == {'ley_brief', 'ley_search', 'ley_evidence'}
+                selected = server.call('ley_brief', {})
+                assert selected['projectId'] == project_id
+            cli('wrong-project-id', 'mcp', '--project-id', other['identity']['projectId'],
+                str(workspace), rejected=True)
+            with mcp('workspace', str(workspace), '--allow-session-writes') as server:
+                assert server.tools() == {'ley_brief', 'ley_search', 'ley_evidence'}
+                brief = server.call('ley_brief', {})
+                assert brief['items'] and len(brief['items']) <= 8
+                assert 'EXCLUDED_SECRET_BEACON' not in json.dumps(brief)
+                task_brief = server.call('ley_brief', {'task': 'why did we stop using Redis?'})
+                assert task_brief['mode'] == 'task-conditioned'
+                assert any('Redis' in item['content'] for item in task_brief['items'])
+                search = server.call('ley_search', {'query': 'why did we stop using Redis?'})
+                assert search['items'], search
+                item = next(item for item in search['items'] if 'Redis' in item['content'])
+                reference = item['reference']
+                evidence = server.call('ley_evidence', {'reference': reference})
+                assert evidence['content'] == item['content']
+                assert evidence['source']['isLatestVersion']
+                forged = {**reference, 'projectId': other['identity']['projectId']}
+                server.call('ley_evidence', {'reference': forged}, rejected=True)
+                server.call('ley_evidence', {'reference': {**reference, 'contentHash': '0' * 64}}, rejected=True)
+                server.call('ley_evidence', {'reference': {**reference, 'endByte': 999999}}, rejected=True)
+                (workspace / 'REQUIREMENTS.md').write_text(requirement + 'Current source changed.\n')
+                stale = server.call('ley_evidence', {'reference': reference})
+                assert stale['content'] == item['content']
+                assert stale['source']['liveSourceState'] == 'original-bytes-changed-at-attached-locator'
+            record['passed'].append('workspace-retrieval-citations-isolation-staleness-no-writes')
+            assert (workspace / 'REQUIREMENTS.md').read_text() == requirement + 'Current source changed.\n'
+            assert not (workspace / '.ley').exists()
+            record['status'] = 'passed'
+        record['cleanup'] = not scratch.exists()
+    except BaseException as error:
+        record['status'] = 'failed'
+        record['error'] = f'{type(error).__name__}: {error}'
+        record['cleanup'] = not Path(record.get('scratch', '/')).exists()
+        raise
+    finally:
+        (proof / 'run.json').write_text(json.dumps(record, indent=2) + '\n')
+
+
+def validate_private_proof(proof):
+    metadata = proof.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700):
+        raise RuntimeError('proof directory must be current-user-owned mode 0700')
+    for path in proof.rglob('*'):
+        metadata = path.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600):
+            raise RuntimeError(f'proof file must be current-user-owned mode 0600: {path}')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('proof', type=Path)
+    parser.add_argument('--binary', type=Path, required=True)
+    args = parser.parse_args()
+    os.umask(0o077)
+    args.proof.mkdir(parents=True, exist_ok=False)
+    validate_private_proof(args.proof)
+    verify(args.binary.resolve(strict=True), args.proof.resolve())
+    validate_private_proof(args.proof)
+    print(args.proof / 'run.json')

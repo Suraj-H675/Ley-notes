@@ -1,17 +1,25 @@
 # Using Ley with an agent
 
-Ley's first agent connection is a local Model Context Protocol (MCP) server over standard input/output (stdio). It is read-only by default. An MCP-capable host can retrieve cited evidence from one project snapshot, bounded session handoffs, and reviewed project lessons. The server does not scan the live project or promise that an agent cannot hallucinate.
+Project Brain readers use the M4 [orientation contract](../project-orientation.md). An existing Brain
+has three read-only tools, supports no-task orientation and natural-language questions, and can be
+selected by exact Project ID without a repository. Unregistered workspaces receive a scope preview.
+The focused-continuity and Bootstrap APIs below describe retained compatibility behavior, not the Brain
+reader. Native earlier-session and separate fresh-session Project Brain acceptance passed on 2026-10-08;
+the [verification feature](../../verification/verify-ley/features/project-orientation.md) defines its
+receipt requirements.
 
-## Preferred MCP surface
+Ley's first agent connection is a local Model Context Protocol (MCP) server over standard input/output (stdio). The Project Brain route is read-only and selects one exact Brain. Registered legacy continuity can expose writes only when its launch explicitly enables them. Neither route promises that an agent cannot hallucinate.
 
-The focused Ley workflow now starts with four canonical tools:
+## Retained focused-continuity compatibility surface
+
+The legacy focused-continuity workflow uses four canonical tools:
 
 - `ley_brief` — compile bounded task-specific continuity and human intent;
 - `ley_search` — search captured project memory with stable IDs/citations;
 - `ley_evidence` — expand an exact citation returned by Ley; the request is citation-bound (snapshot/path/hash/line range), not an arbitrary filesystem path;
 - `ley_checkpoint` — append an explicit structured session checkpoint when session writes are enabled.
 
-These delegate to already-proven Ley internals. `ley_brief` is the only normal project MCP entry point for task-context compilation; `ley_compile_context` is reserved for the explicit uninitialized-workspace Bootstrap Context server. `ley_checkpoint` owns the model-facing structured checkpoint write path. `ley_evidence` is the only model-facing evidence reader: agents must carry forward the exact citation returned by Ley rather than constructing an uncited path read. The former `ley_read_evidence` and `ley_read_media_evidence` wrappers are retired by ADR 0100; canonical Evidence handles bounded text and supported original-image citations under the same transition/native authority checks. The former `ley_search_context`, `ley_search_memory`, and `ley_search_activity` wrappers are also retired; canonical `ley_search` owns bounded captured evidence/activity recall. ADR 0101 retires broad Project Resume from MCP while keeping local `ley resume`, ADR 0102 retires the legacy `ley_project_overview` tool plus its overview resource, and ADR 0103 retires the duplicate `ley_session_checkpoint` alias while keeping hostless legacy Start and compatibility Finish where explicit session-write capability is enabled. Remaining granular MCP tools may still be available during migration for diagnostics, recovery, compatibility, and specialized workflows, but they are not the preferred product surface.
+These APIs remain for already-registered focused-continuity projects. New Project Brain reads use the M4 three-tool server described in the [orientation contract](../project-orientation.md); they do not expose `ley_checkpoint`. `ley_compile_context` is reserved for explicit uninitialized-workspace Bootstrap Context. `ley_checkpoint` owns the model-facing structured checkpoint write path only on compatible legacy routes. `ley_evidence` requires the exact returned citation rather than an arbitrary path. Historical ADRs and the compatibility machinery below describe migration behavior, not the Project Brain surface.
 
 Ley Desktop exposes a deliberate **Agent brief preview** on the project Overview. It calls the same
 `compile_project_context_for_agent_with_transition_registries` path as canonical `ley_brief` with the normal
@@ -55,13 +63,18 @@ Configure one server entry per project. Use absolute command and project paths b
 
 This JSON shows the portable server-entry shape supported by MCP hosts. A host may represent the same command and arguments in TOML or its settings UI. Ley does not publish guessed configuration for fast-changing hosts. Use that host's current MCP documentation to enter the same local command.
 
-The process resolves native project continuity first, retaining private project-to-vault binding only as migration
+The process resolves an exact authorized Project Brain working copy first and routes it to M4's three read-only
+tools. Source-only Brains use `ley mcp --project-id PROJECT_ID --source-only`; they do not need a repository path.
+An unregistered workspace receives only `ley_preview_workspace`, which reports bounded local scope without
+creating a Brain or marker. The user must authorize any create or attach step. For workspaces that remain on the
+legacy route, the process resolves native continuity first, retaining private project-to-vault binding only as migration
 compatibility for older projects. An explicit non-persistent `--vault` override is accepted only when that directory already
 contains valid captured memory for the exact project; it cannot create a vault. If a **persisted** legacy vault root
 later disappears, Ley keeps proven native continuity instead of discarding it. When native artifact, session,
 learning, and approved-source read authorities all validate for that exact project, Ley starts the canonical read
-surface with exactly `ley_brief`, `ley_search`, and `ley_evidence`; `--allow-session-writes` adds only
-`ley_checkpoint`. If only native session authority is proven, Ley falls back further to the retained read-only
+surface with exactly `ley_brief`, `ley_search`, and `ley_evidence`; for that legacy continuity route,
+`--allow-session-writes` adds only `ley_checkpoint`. Project Brain servers stay read-only with or without that flag.
+If only native session authority is proven, Ley falls back further to the retained read-only
 session-recovery readers so continuity is not stranded. Historical content remains evidence rather than instructions.
 An unresolved pre-cutover unbound project, a bad explicit `--vault` override, an inconsistent legacy snapshot, or a
 missing persisted vault without sufficient validated native authority receives the protocol-valid inactive server.
@@ -88,7 +101,7 @@ Keep the default command when the host needs retrieval only. Add `--allow-sessio
 }
 ```
 
-On a fully canonical native project this flag adds only `ley_checkpoint`, keeping the normal agent contract at four tools. In legacy-compatibility mode `ley_session_start` remains available for hostless legacy clients that have no lifecycle hook to establish the first session, and `ley_session_finish` remains available for explicit compatibility terminalization because host Stop hooks capture turn responses but do not close sessions. The duplicate `ley_session_checkpoint` alias is retired; canonical `ley_checkpoint` owns the checkpoint write path. The former shape-specific recovery verifier/commit APIs are retired from core and the MCP runtime; historical recovery events remain replayable. Context Utility mutation wrappers are also deleted from the runtime. The flag does not enable deletion, project switching, raw transcript capture, or live-source scanning.
+On a fully canonical legacy-continuity project this flag adds only `ley_checkpoint`, keeping that compatibility contract at four tools. A Project Brain server remains read-only. In legacy-compatibility mode `ley_session_start` remains available for hostless legacy clients that have no lifecycle hook to establish the first session, and `ley_session_finish` remains available for explicit compatibility terminalization because host Stop hooks capture turn responses but do not close sessions. The duplicate `ley_session_checkpoint` alias is retired; canonical `ley_checkpoint` owns the checkpoint write path. The former shape-specific recovery verifier/commit APIs are retired from core and the MCP runtime; historical recovery events remain replayable. Context Utility mutation wrappers are also deleted from the runtime. The flag does not enable deletion, project switching, raw transcript capture, or live-source scanning.
 
 Every write requires a stable `requestId` matching `req_` plus 32 lowercase hexadecimal characters. Keep the same ID until a call succeeds. An exact retry returns `replayed: true`; different content with the same ID fails.
 
@@ -134,11 +147,11 @@ For an initialized project with complete native authority, the normal agent work
 3. Carry an exact citation returned by Ley into `ley_evidence` when the underlying source matters. The same tool verifies snapshot/path/hash identity for text citations and supported original PNG/JPEG/WebP evidence. Text ranges remain bounded; media citations use the explicit non-text `0/0` range. Ley does not perform OCR or claim an image interpretation.
 4. When the MCP process was started with `--allow-session-writes`, use `ley_checkpoint` only after a meaningful decision, implementation slice, failed attempt, verification result, direction change, or handoff. Use the current hook-provided Ley session ID and record only observed/supportable state. An exact request-ID retry is idempotent.
 
-A fully canonical native server advertises exactly the three read tools above, or those three plus `ley_checkpoint` when session writes are enabled. It does not expose granular session/recovery/context-utility/learning tools, graph/activity resources, or filesystem-backed compatibility APIs. Learning proposals are not part of canonical native MCP authority.
+A fully canonical legacy-continuity server advertises exactly the three read tools above, or those three plus `ley_checkpoint` when session writes are enabled. A Project Brain server advertises only its three read-only Brain tools. Neither exposes granular session/recovery/context-utility/learning tools, graph/activity resources, or filesystem-backed compatibility APIs. Learning proposals are not part of canonical MCP authority.
 
 ### Bootstrap exception
 
-An uninitialized workspace with explicit Bootstrap Specification authority is a different fail-closed mode. Its server advertises exactly one read-only tool: `ley_compile_context`. It has no normal project search/evidence/checkpoint, session, learning, graph, resource, capture, or mutation surface. Legacy Bootstrap Reference grants do not activate this mode or contribute context; they are cleanup-only records. Initializing the workspace retires bootstrap authority and returns it to the ordinary project lifecycle.
+An uninitialized workspace with explicit Bootstrap Specification authority is a different fail-closed compatibility mode. Its server advertises exactly one read-only tool: `ley_compile_context`. It has no normal project search/evidence/checkpoint, session, learning, graph, resource, capture, or mutation surface. Legacy Bootstrap Reference grants do not activate this mode or contribute context; they are cleanup-only records. Initializing a legacy continuity workspace retires bootstrap authority. New Project Brain workspaces instead receive the M4 scope-preview route.
 
 ### Compatibility and recovery modes
 
@@ -192,7 +205,7 @@ npx @modelcontextprotocol/inspector --cli \
   --tool-arg maxTokens=1200
 ```
 
-Do not use legacy granular session/learning tools as a normal development smoke test. A fully canonical native
-server should expose only the three read tools above, plus `ley_checkpoint` when session writes were explicitly
-enabled. Compatibility-mode inventories are tested separately because their purpose is to preserve or retire old
+Do not use legacy granular session/learning tools as a normal development smoke test. A fully canonical legacy
+continuity server exposes three read tools, plus `ley_checkpoint` when session writes were explicitly enabled; a
+Project Brain server stays at three read-only Brain tools. Compatibility-mode inventories are tested separately because their purpose is to preserve or retire old
 authority safely, not to define the current agent workflow.

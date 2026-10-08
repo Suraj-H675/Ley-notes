@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Run real Codex turns and retain protocol, hook, and termination receipts."""
+import argparse
+import json
+import os
+from pathlib import Path
+import queue
+import signal
+import stat
+import subprocess
+import threading
+import time
+
+
+LEY_PLUGIN_ID = 'ley-memory@ley'
+
+
+def select_ley_skill(skills_response: dict, codex_home: Path) -> dict:
+    """Select the installed Ley plugin skill across Codex's qualified names."""
+    plugin_name = LEY_PLUGIN_ID.partition('@')[0]
+    expected_names = {'ley', f'{plugin_name}:ley'}
+    matches = [entry for row in skills_response.get('data', [])
+               for entry in row.get('skills', [])
+               if entry.get('pluginId') == LEY_PLUGIN_ID
+               and entry.get('name') in expected_names
+               and entry.get('enabled') is True]
+    if len(matches) != 1:
+        raise RuntimeError(f'Expected exactly one installed Ley skill, found {len(matches)}')
+    try:
+        path = Path(matches[0]['path']).resolve(strict=True)
+    except (KeyError, OSError) as error:
+        raise RuntimeError('Installed Ley skill is unavailable') from error
+    if not path.is_file() or not path.is_relative_to(Path(codex_home).resolve()):
+        raise RuntimeError('Installed Ley skill is unavailable')
+    return {'name': matches[0]['name'], 'path': str(path)}
+
+
+def shared_runtime_status(directory=None) -> dict:
+    directory = directory or Path('/tmp').resolve() / f'codex-daemon-{os.geteuid()}'
+    record = {'path': str(directory), 'exists': False}
+    try:
+        metadata = directory.lstat()
+    except FileNotFoundError:
+        return record
+    record.update(exists=True, uid=metadata.st_uid,
+                  mode=f'{stat.S_IMODE(metadata.st_mode):04o}',
+                  isDirectory=stat.S_ISDIR(metadata.st_mode),
+                  isSymlink=stat.S_ISLNK(metadata.st_mode))
+    return record
+
+
+def nested_turn_sandbox_policy(shared_runtime: dict, mountinfo: str = None) -> dict:
+    """Use externalSandbox only when a read-only outer socket mask proves isolation."""
+    masked = (shared_runtime.get('exists') is True
+              and shared_runtime.get('uid') == os.geteuid()
+              and shared_runtime.get('isDirectory') is True
+              and shared_runtime.get('isSymlink') is False
+              and shared_runtime.get('mode') == '0000')
+    if masked:
+        if mountinfo is None:
+            try:
+                mountinfo = Path('/proc/self/mountinfo').read_text()
+            except OSError:
+                mountinfo = ''
+        matching = [line.split(' - ', 1)[0].split()
+                    for line in mountinfo.splitlines()]
+        matching = [parts for parts in matching if len(parts) >= 6
+                    and parts[4] == shared_runtime['path']]
+        if matching and 'ro' in matching[-1][5].split(','):
+            return {'type': 'externalSandbox', 'networkAccess': 'restricted'}
+    # Direct host launches must not claim they are already sandboxed.
+    return {'type': 'workspaceWrite', 'networkAccess': False}
+
+
+def private_directory(directory: Path) -> dict:
+    directory.mkdir(mode=0o700, exist_ok=True)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        if metadata.st_uid != os.getuid():
+            raise RuntimeError(f"private runtime directory has another owner: {directory}")
+        os.fchmod(descriptor, 0o700)
+        metadata = os.fstat(descriptor)
+        if stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise RuntimeError(f"private runtime directory must have mode 0700: {directory}")
+        return {'path': str(directory), 'uid': metadata.st_uid,
+                'mode': f'{stat.S_IMODE(metadata.st_mode):04o}'}
+    finally:
+        os.close(descriptor)
+
+
+def prepare_private_codex_home(codex_home: Path) -> list:
+    """Validate existing IPC trees and establish private roots for new sockets."""
+    records = [private_directory(codex_home)]
+    for relative in ['tmp', 'app-server-control', 'app-server-daemon', 'ipc']:
+        runtime_root = codex_home / relative
+        records.append(private_directory(runtime_root))
+        for root, directories, _ in os.walk(runtime_root, followlinks=False):
+            for name in directories:
+                records.append(private_directory(Path(root) / name))
+    records.append(private_directory(codex_home / 'tmp/xdg-runtime'))
+    return records
+
+
+def runtime_environment(env: dict) -> tuple:
+    env = env.copy()
+    codex_home = Path(env['CODEX_HOME']).absolute()
+    records = prepare_private_codex_home(codex_home)
+    env['CODEX_HOME'] = str(codex_home)
+    env['TMPDIR'] = str(codex_home / 'tmp')
+    env['TMP'] = env['TMPDIR']
+    env['TEMP'] = env['TMPDIR']
+    env['XDG_RUNTIME_DIR'] = str(codex_home / 'tmp/xdg-runtime')
+    return env, records
+
+
+class Host:
+    def __init__(self, argv, env, project, proof, model='gpt-6-luna', effort='xhigh'):
+        self.proof = proof
+        self.model = model
+        self.effort = effort
+        shared_runtime = shared_runtime_status()
+        self.turn_sandbox_policy = nested_turn_sandbox_policy(shared_runtime)
+        (proof / 'shared-runtime-preflight.json').write_text(
+            json.dumps(shared_runtime, indent=2) + '\n')
+        env, directories = runtime_environment(env)
+        (proof / 'runtime-before-launch.json').write_text(json.dumps({
+            'directories': directories, 'childUmask': '0077',
+            'temporaryDirectory': env['TMPDIR'],
+            'runtimeDirectory': env['XDG_RUNTIME_DIR'],
+            'turnSandboxPolicy': self.turn_sandbox_policy}, indent=2) + '\n')
+        self.events = (proof / 'protocol.jsonl').open('x')
+        self.stderr = (proof / 'stderr.log').open('x')
+        self.inbox = queue.Queue()
+        self.responses = {}
+        self.serial = 0
+        self.proc = subprocess.Popen(argv, env=env, cwd=project, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True, bufsize=1, start_new_session=True, umask=0o077)
+        self.readers = [threading.Thread(target=self.stdout_reader),
+                        threading.Thread(target=self.stderr_reader)]
+        for reader in self.readers:
+            reader.start()
+
+    def stdout_reader(self):
+        for line in self.proc.stdout:
+            self.inbox.put(line)
+        self.inbox.put(None)
+
+    def stderr_reader(self):
+        for line in self.proc.stderr:
+            self.stderr.write(line)
+            self.stderr.flush()
+
+    def send(self, message):
+        self.events.write(json.dumps({'direction': 'client->server', 'message': message}) + '\n')
+        self.events.flush()
+        self.proc.stdin.write(json.dumps(message) + '\n')
+        self.proc.stdin.flush()
+
+    def receive(self, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('protocol deadline reached')
+        try:
+            line = self.inbox.get(timeout=remaining)
+        except queue.Empty:
+            raise TimeoutError('protocol deadline reached')
+        if line is None:
+            raise RuntimeError('app-server stdout closed before expected result')
+        message = json.loads(line)
+        self.events.write(json.dumps({'direction': 'server->client', 'message': message}) + '\n')
+        self.events.flush()
+        item = message.get('params', {}).get('item', {})
+        if (message.get('method') == 'item/completed'
+                and item.get('type') == 'commandExecution'
+                and 'error building bubblewrap command:' in (item.get('aggregatedOutput') or '')):
+            raise RuntimeError('Sandbox command rejected before execution: ' + item['aggregatedOutput'].strip())
+        if 'method' in message and 'id' in message:
+            self.send({'id': message['id'], 'error': {
+                'code': -32601, 'message': 'Acceptance driver does not grant sandbox escapes or answer model questions'}})
+            raise RuntimeError('Unexpected host request: ' + message['method'])
+        if 'id' in message:
+            self.responses[message['id']] = message
+        return message
+
+    def request(self, method, params, timeout=30):
+        self.serial += 1
+        request_id = 'm4-request-' + str(self.serial)
+        self.send({'id': request_id, 'method': method, 'params': params})
+        deadline = time.monotonic() + timeout
+        while request_id not in self.responses:
+            self.receive(deadline)
+        response = self.responses.pop(request_id)
+        if 'error' in response:
+            raise RuntimeError(method + ': ' + json.dumps(response['error']))
+        return response['result']
+
+    def turn(self, thread_id, text, skill=None):
+        inputs = [{'type': 'text', 'text': text}]
+        if skill:
+            inputs.append({'type': 'skill', 'name': skill['name'], 'path': skill['path']})
+        result = self.request('turn/start', {
+            'threadId': thread_id, 'input': inputs, 'model': self.model,
+            'effort': self.effort, 'approvalPolicy': 'never',
+            'sandboxPolicy': self.turn_sandbox_policy})
+        turn_id = result['turn']['id']
+        deadline = time.monotonic() + 180
+        while True:
+            message = self.receive(deadline)
+            params = message.get('params', {})
+            turn = params.get('turn', {})
+            if message.get('method') == 'turn/completed' and turn.get('id') == turn_id:
+                if turn.get('status') != 'completed':
+                    raise RuntimeError('turn ended: ' + json.dumps(turn))
+                return turn
+
+    def close(self):
+        self.proc.stdin.close()
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+            try:
+                self.proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+                self.proc.wait(timeout=3)
+        for reader in self.readers:
+            reader.join(timeout=3)
+        self.proc.stdout.close()
+        self.proc.stderr.close()
+        self.events.close()
+        self.stderr.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('setup_dir', type=Path)
+    parser.add_argument('--mode', choices=['earlier', 'fresh'], required=True)
+    parser.add_argument('--attempt', default=None)
+    parser.add_argument('--model', default='gpt-6-luna')
+    parser.add_argument('--effort', default='xhigh')
+    args = parser.parse_args()
+    setup = json.loads((args.setup_dir / 'setup.json').read_text())
+    proof = args.setup_dir / (args.attempt or args.mode)
+    proof.mkdir(mode=0o700)
+    os.umask(0o077)
+    root = Path('/home/suraj/projects/Ley-notes')
+    fixture = Path(setup.get('fixture', root / '.cache/m4/acceptance-fixture'))
+    codex_home = Path(setup['codexHome'])
+    env = os.environ.copy()
+    env['CODEX_HOME'] = str(codex_home)
+    env['PATH'] = str(fixture / 'bin') + os.pathsep + env.get('PATH', '')
+    for key, directory in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data')]:
+        env[key] = str(fixture / directory)
+    env.pop('LEY_EVAL_PRIVATE_ROOT', None)
+    argv = [setup['codexBinary'], '--no-daemon', 'app-server', '--listen', 'stdio://']
+    started = time.monotonic()
+    record = {'status': 'started', 'argv': argv, 'cwd': setup['project'],
+              'model': args.model, 'effort': args.effort, 'turns': [],
+              'authOrigin': setup['authOrigin'], 'mode': args.mode,
+              'capture': 'Real installed production plugin hooks only; no seeded history',
+              'outerSharedSocket': 'Diagnostic only; this outer runtime may mask Codex shared sockets and does not gate launch',
+              'modelProcessStarted': False,
+              'noConversationalHandoff': args.mode == 'fresh',
+              'acceptance': 'Not evaluated by protocol driver; requires capture, evidence and behavior checks'}
+    (proof / 'receipt.json').write_text(json.dumps(record, indent=2) + '\n')
+    host = None
+    try:
+        host = Host(argv, env, setup['project'], proof, args.model, args.effort)
+        record['modelProcessStarted'] = True
+        record['pidInToolNamespace'] = host.proc.pid
+        host.request('initialize', {'clientInfo': {'name': 'ley-m4-acceptance', 'version': '1'},
+                                    'capabilities': {'experimentalApi': True}})
+        host.send({'method': 'initialized'})
+        hooks = host.request('hooks/list', {'cwds': [setup['project']]})
+        (proof / 'hooks-before.json').write_text(json.dumps(hooks, indent=2) + '\n')
+        for entry in hooks['data']:
+            if entry['errors']:
+                raise RuntimeError('Hook discovery errors: ' + json.dumps(entry['errors']))
+            for hook in entry['hooks']:
+                if hook.get('pluginId') != 'ley-memory@ley':
+                    raise RuntimeError('Unexpected ambient hook: ' + json.dumps(hook))
+                if hook.get('handlerType') != 'command' or hook.get('command') != 'ley hook --host codex':
+                    raise RuntimeError('Unexpected Ley hook command')
+                if hook['trustStatus'] not in ['trusted', 'managed']:
+                    host.request('config/value/write', {
+                        'keyPath': 'hooks.state.' + json.dumps(hook['key']) + '.trusted_hash',
+                        'value': hook['currentHash'], 'mergeStrategy': 'upsert',
+                        'filePath': str(Path(setup['codexHome']) / 'config.toml')})
+        after = host.request('hooks/list', {'cwds': [setup['project']]})
+        (proof / 'hooks-ready.json').write_text(json.dumps(after, indent=2) + '\n')
+        thread = host.request('thread/start', {
+            'cwd': setup['project'], 'model': args.model,
+            'approvalPolicy': 'never',
+            'ephemeral': True, 'experimentalRawEvents': True})
+        thread_id = thread['thread']['id']
+        record['threadId'] = thread_id
+        (proof / 'receipt.json').write_text(json.dumps(record, indent=2) + '\n')
+        if args.mode == 'earlier':
+            texts = [
+                'Implement the webhook delivery queue in REQUIREMENTS.md. Investigate the existing SQLite implementation and explain the design choice relative to Redis given offline workers. Evaluate approach A, deleting the row before sending. Add and run a test requiring failed sends to remain retryable. Stop after reporting the observed outcome and its cause; do not fix it or add retry scheduling yet.',
+                'Fix the failed-delivery behavior. Keep the queued item pending when sending fails and acknowledge only after successful sending. Add or adjust a FIFO test and run the full suite. Explain the implemented solution and the observed verification. Leave exponential retry scheduling unresolved.'
+            ]
+            for text in texts:
+                record['turns'].append(host.turn(thread_id, text))
+                (proof / 'receipt.json').write_text(json.dumps(record, indent=2) + '\n')
+        else:
+            skills = host.request('skills/list', {'cwds': [setup['project']], 'forceReload': True})
+            (proof / 'skills.json').write_text(json.dumps(skills, indent=2) + '\n')
+            skill = select_ley_skill(skills, Path(setup['codexHome']))
+            record['turns'].append(host.turn(thread_id, '$ley', skill))
+            record['turns'].append(host.turn(thread_id, 'Why did this project choose SQLite instead of Redis, and what specifically caused the first retry approach to fail? Distinguish the observed test result from the retained explanation.', skill))
+            record['turns'].append(host.turn(thread_id, 'Continue the unresolved retry scheduling work. Inspect the recovered evidence and current code, implement a bounded exponential retry delay with an injectable clock, and run the tests. Preserve the original delivery guarantees.'))
+        record['status'] = 'completed'
+    except Exception as error:
+        record['status'] = 'blocked-or-failed'
+        record['failure'] = str(error)
+    finally:
+        if host:
+            host.close()
+            record['exitCode'] = host.proc.returncode
+            record['childExited'] = host.proc.returncode is not None
+        record['elapsedSeconds'] = round(time.monotonic() - started, 3)
+        (proof / 'receipt.json').write_text(json.dumps(record, indent=2) + '\n')
+    print(json.dumps(record, indent=2), flush=True)
+    return 0 if record['status'] == 'completed' else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -1,12 +1,20 @@
 # Connect Ley to coding agents
 
+Project Brain readers use the M4 [orientation contract](../project-orientation.md). An existing Brain
+has three read-only tools, supports no-task orientation and natural-language questions, and can be
+selected by exact Project ID without a repository. Unregistered workspaces receive a scope preview.
+The focused-continuity and Bootstrap APIs below describe retained compatibility behavior, not the Brain
+reader. Native earlier-session and separate fresh-session Project Brain acceptance passed on 2026-10-08;
+the [verification feature](../../verification/verify-ley/features/project-orientation.md) defines its
+receipt requirements.
+
 Ley uses three layers together:
 
 1. lifecycle hooks establish/reuse the Ley session, emit guidance-only continuity/recovery context, and capture bounded turn evidence plus supported Bash post-tool observations. Initialized projects do **not** auto-inject task-specific project history on prompt submission; explicit uninitialized-workspace Bootstrap Specification authority is the narrow exception;
-2. local stdio MCP exposes the focused `ley_brief` / `ley_search` / `ley_evidence` / `ley_checkpoint` surface for canonical projects; older compatibility mode may expose legacy session inspection surfaces, while retained recovery events remain replay-only;
-3. a portable agent skill tells the host to prefer compiled task context, inspect live source when needed, and preserve meaningful structure.
+2. local stdio MCP routes an authorized Project Brain to three read-only tools; registered legacy continuity retains the focused `ley_brief` / `ley_search` / `ley_evidence` / `ley_checkpoint` surface, while retained recovery events remain replay-only;
+3. a portable agent skill teaches Project Brain orientation, exact evidence readback, and honest treatment of historical claims.
 
-For ordinary agent work, prefer the four focused MCP tools: call `ley_brief` for the current task, `ley_search` when the brief needs deeper captured history, carry an exact returned citation into `ley_evidence`, and use `ley_checkpoint` only at a meaningful structured session boundary when writes are enabled. `ley_evidence` verifies the immutable snapshot/path/hash citation instead of accepting an arbitrary path. `ley_compile_context` is bootstrap-only. Remaining lower-level evidence/session lifecycle routes are compatibility/specialized surfaces during migration and should not define the normal host workflow.
+For registered legacy continuity, use `ley_brief` for the current task, `ley_search` for deeper history, carry an exact returned citation into `ley_evidence`, and use `ley_checkpoint` only at a meaningful session boundary when writes are enabled. Project Brain orientation and natural-language retrieval use the separate M4 surface. `ley_compile_context` remains Bootstrap-only.
 
 All three run on the user's machine. The host may send deliberately retrieved context to its model provider. Lifecycle hooks and MCP retrieval make no external-connector network request. The legacy connector provider lifecycle is retired as well: current CLI does not create or refresh connectors and therefore performs no GitHub connector fetch; retained local connector authority/snapshots remain inspectable/removable only for compatibility. The former semantic-model/index subsystem is also removed; all current and retained legacy Search paths are lexical-only.
 
@@ -61,7 +69,7 @@ historical imports are not presented as integration activity. A blank activity s
 means only that Ley has no retained matching session for that project. The explicit Desktop smoke check uses this
 same retained host-hook evidence; it never manufactures a session merely to make the status green.
 
-The packaged integrations enable only the canonical session-checkpoint write capability in their local MCP process. Tentative learning proposals are not enabled by default; a deliberate compatibility workflow may still opt into `--allow-learning-proposals` while that legacy route remains available. Host permission controls still apply.
+The packaged integrations enable the session-checkpoint write capability only on registered legacy-continuity routes. A Project Brain route stays read-only. Tentative learning proposals are not enabled by default; a deliberate compatibility workflow may still opt into `--allow-learning-proposals` while that legacy route remains available. Host permission controls still apply.
 
 Dedicated Ley graph query and Context Utility mutation tools are retired. For structural impact questions, hosts should use bounded Ley continuity context and then inspect the live workspace with the coding host's normal repository tools. Retained deterministic graph history and old Context Utility observation records are historical compatibility/provenance data only; they do not re-enable those model-facing workflows or prove that a model used or ignored context.
 
@@ -94,15 +102,20 @@ codex plugin marketplace add /absolute/path/to/Ley-notes
 codex plugin add ley-memory@ley
 ```
 
-The packaged MCP process uses the default `cloud` egress target and enables session writes only; tentative learning proposals are not enabled by default.
+The Codex package uses the default `cloud` egress target and opts into session writes only for registered legacy state. The generated Desktop connection keeps the same compatibility behavior. A Project Brain route exposes no write tool, even when the legacy write option is present.
 
-For an initialized project, the package's normal MCP contract is the same four-tool surface taught by its Skill: `ley_brief`, `ley_search`, `ley_evidence`, and `ley_checkpoint`. `ley_checkpoint` appears only because the package starts MCP with `--allow-session-writes`. `ley_compile_context` is not a normal-project alias; it exists only in the explicit Bootstrap Context mode described below.
+Codex launches plugin MCP children with a sanitized environment. The packaged server explicitly forwards
+`XDG_CONFIG_HOME` so `ley mcp .` opens the active local Ley database while keeping machine-specific paths
+out of the plugin manifest. The isolated native acceptance probe verified the forwarded value and a
+connected MCP server.
+
+For an existing Project Brain, the Codex skill teaches `ley_brief`, `ley_search`, and `ley_evidence`. A registered legacy server may additionally expose `ley_checkpoint` when launched with explicit session-write capability. `ley_compile_context` remains a Bootstrap compatibility route.
 
 ### M3 Project Brain Codex capture
 
 Project Brains now have a separate M3 Codex-capture route. **Connecting Codex is not capture permission.** The user must open Project settings → Codex activity capture and confirm the exact Project Brain, authorized working copy, host, and retention mode through Ley Desktop's native confirmation. Attachment/import and model-sharing authority remain separate. The hook/CLI/MCP surfaces cannot grant this permission.
 
-When `ley hook --host codex` runs inside a Project Brain working copy, it preflights that canonical capture boundary before the older continuity adapter. An active grant records only supported observable hook events into the Project Chronicle and returns `{}`; M4 `$ley` orientation/retrieval is not implemented yet. A Brain with an absent, revoked, moved, replaced, or otherwise ineffective capture grant also returns `{}` and **does not fall through to legacy session capture**. The current Project Brain adapter supports `SessionStart`, `UserPromptSubmit`, Bash `PostToolUse`, `Stop`, and `SessionEnd`. It never reads `transcript_path` or hidden reasoning. Stable Codex turn/tool identities are used for retry deduplication when available, per-session Episode ordering is explicit, and gaps disclose unsupported/missing observations. A returned Bash result remains an observed result, never proof that the command, test, or requested work succeeded.
+When `ley hook --host codex` runs inside a Project Brain working copy, it preflights that canonical capture boundary before the older continuity adapter. An active grant records only supported observable hook events into the Project Chronicle and returns `{}`. The separate M4 MCP reader supplies `$ley` orientation and natural-language retrieval; native earlier and fresh-session acceptance passed on 2026-10-08. A Brain with an absent, revoked, moved, replaced, or otherwise ineffective capture grant also returns `{}` and **does not fall through to legacy session capture**. The current Project Brain adapter supports `SessionStart`, `UserPromptSubmit`, Bash `PostToolUse`, `Stop`, and `SessionEnd`. It never reads `transcript_path` or hidden reasoning. Stable Codex turn/tool identities are used for retry deduplication when available, per-session Episode ordering is explicit, and gaps disclose unsupported/missing observations. A returned Bash result remains an observed result, never proof that the command, test, or requested work succeeded.
 
 The paragraphs below describe the retained focused-continuity compatibility path used when the working directory is not routed through a Project Brain capture boundary.
 
@@ -112,7 +125,7 @@ Call `ley_brief` when prior project continuity would materially help the current
 
 Project-level egress still gates lifecycle hooks before session mutation. Fine-grained historical-source egress is enforced by deliberate retrieval surfaces (`ley_brief`, Search, Evidence), not by initialized `SessionStart`, because schema-7 startup no longer emits historical source bodies. `--egress-target local` is only for a deliberately approved local-model/runtime configuration; Ley does not auto-detect or attest model locality. `confirm-per-use` remains fail-closed until a trustworthy local confirmation flow exists.
 
-Codex also supports the separate **Bootstrap Specification** mode. A local user must first attach already-approved bootstrap authority. The still-uninitialized target creates no Ley project/session history, while its MCP server advertises exactly one read-only tool: `ley_compile_context`. Normal initialization retires the bootstrap authority and returns the workspace to the ordinary four-tool project lifecycle.
+Codex also supports the separate **Bootstrap Specification** mode. A local user must first attach already-approved bootstrap authority. The still-uninitialized target creates no Ley project/session history, while its MCP server advertises exactly one read-only tool: `ley_compile_context`. Initializing a legacy continuity target retires bootstrap authority; an authorized Project Brain uses the M4 read-only route.
 
 Retained Context Mount, Knowledge Scope, Policy Bundle, external-connector, and fine-grained egress records remain compatibility/privacy state. They can still constrain what `ley_brief` may admit, even after the agent-facing surface is small. Legacy Bootstrap Reference grants are narrower cleanup-only state: they do not activate or contribute bootstrap context and survive only so local users can list/detach them before initialization cleanup. Codex cannot mutate these authorities through normal MCP or hooks.
 
@@ -211,8 +224,8 @@ checkpoints.
 
 ## Failure and retry behavior
 
-An ordinary uninitialized workspace with no Bootstrap Specification authority, or an initialized-but-unbound project, returns `{}` and remains untouched. An uninitialized workspace with only Bootstrap Reference authority also remains a hook no-op. The narrow prompt-time exception requires current Bootstrap Specification authority: non-prompt events still return `{}`, but `UserPromptSubmit` may return read-only whole-Specification context without a Ley session or turn capture. In normal project mode, a stable host session maps to the same Ley session after process restart. Codex pairs retries with its documented stable `turn_id`; Claude Code uses the append-only Ley session state because their pre/post events do not share a stable turn identifier. Exact prompt/response retries replay the existing bounded turn evidence instead of duplicating it. The same prompt submitted after a completed response remains a new turn. A new normal-project host session receives guidance-only startup context; historical checkpoints, handoffs, learnings, and other project bodies require deliberate retrieval. Captured prompt/response bodies are never auto-injected; an interrupted current session may expose only the bounded body-free recovery signal.
+An ordinary uninitialized workspace with no Bootstrap Specification authority, or an initialized-but-unbound legacy project, remains a hook no-op. An uninitialized workspace with only Bootstrap Reference authority also remains a hook no-op. The narrow prompt-time exception requires current Bootstrap Specification authority: non-prompt events still return `{}`, but `UserPromptSubmit` may return read-only whole-Specification context without a Ley session or turn capture. In normal project mode, a stable host session maps to the same Ley session after process restart. Codex pairs retries with its documented stable `turn_id`; Claude Code uses the append-only Ley session state because their pre/post events do not share a stable turn identifier. Exact prompt/response retries replay the existing bounded turn evidence instead of duplicating it. The same prompt submitted after a completed response remains a new turn. A new normal-project host session receives guidance-only startup context; historical checkpoints, handoffs, learnings, and other project bodies require deliberate retrieval. Captured prompt/response bodies are never auto-injected; an interrupted current session may expose only the bounded body-free recovery signal.
 
-The bundled MCP process also starts cleanly in an ordinary workspace, but advertises zero capabilities and no tools or resources. It never initializes or scans that directory. If and only if the local user has explicitly attached Bootstrap Specification authority, that same uninitialized workspace instead receives the one-tool read-only bootstrap MCP server. A legacy Reference-only workspace remains inactive. This keeps a globally installed integration quiet and harmless until the user either sets up a normal Ley project or explicitly grants the narrow Specification bootstrap source.
+The bundled MCP process gives an unregistered workspace only `ley_preview_workspace`, a read-only scope preview that creates no Brain or marker. It never initializes the workspace. Explicit Bootstrap Specification authority selects its separate one-tool compatibility server, and a legacy Reference-only workspace stays inactive. A Project Brain requires an exact authorized locator; a source-only Brain uses an explicit Project ID. This keeps local scope review separate from create, attach, capture, and sharing permission.
 
 If a captured snapshot is missing or inconsistent, the hook fails rather than inventing context. Run `ley doctor`, restore the binding if needed, then `ley ingest` deliberately.

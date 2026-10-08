@@ -77,6 +77,11 @@ For Desktop, end the Cua task session, stop the exact execution session/process 
 
 ## Helpers
 
+For Project Brain orientation, follow [the dedicated feature](features/project-orientation.md).
+Its offline driver checks the current CLI and MCP in disposable private state. Its native driver retains
+real earlier/fresh Codex receipts and records nested command failures at the native host boundary.
+Report these gates separately; offline checks cannot establish native fresh-session acceptance.
+
 `scripts/control-ley` is executable and accepts `launch`, `doctor`, `drive`, `cleanup`, and `all`, followed by the evidence directory. To execute the full CLI recipe with automatic cleanup:
 
 ```bash

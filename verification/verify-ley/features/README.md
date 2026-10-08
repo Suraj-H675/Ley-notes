@@ -10,6 +10,7 @@ Report each entry point as passed, failed, or blocked. An absent host, inaccessi
 
 ## Features
 
+- [Native Project Brain orientation](project-orientation.md): M4 real Codex session receipts, private runtime preflight, and fresh-session continuation gates.
 - [Deterministic Project Brain import](project-import.md): M2 Sources, versions, per-copy inventory, retries and failures.
 - [Project Chronicle and Codex capture](project-chronicle.md): M3 canonical Sessions/Episodes, explicit capture consent, gaps, replay and real Codex hook behavior.
 - [Project onboarding and capture](capture.md): initialization, capture preview, refresh, native persistence.

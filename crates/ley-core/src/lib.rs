@@ -28,6 +28,7 @@ use uuid::Uuid;
 mod approved_source;
 mod binding;
 mod bootstrap_specification;
+mod brain_read;
 mod consolidation_inbox;
 mod context_compiler;
 mod context_mount;
@@ -83,6 +84,12 @@ pub use bootstrap_specification::{
     BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION,
     MAX_BOOTSTRAP_REFERENCES_PER_WORKSPACE, MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE,
     MAX_BOOTSTRAP_WORKSPACES,
+};
+pub use brain_read::{
+    brain_read_brief, brain_read_evidence, brain_read_search, resolve_brain_workspace, BrainBrief,
+    BrainEvidenceReference, BrainEvidenceResult, BrainReadBinding, BrainReadItem,
+    BrainReadOmissions, BrainRecordType, BrainSearchResult, BrainWorkspaceResolution,
+    DEFAULT_BRAIN_READ_RESULTS, MAX_BRAIN_READ_RESULTS,
 };
 pub use consolidation_inbox::{
     consolidation_inbox, consolidation_inbox_with_continuity_transition, ConsolidationAction,
@@ -1199,6 +1206,49 @@ pub fn preview_initial_capture(
                 "initial capture preview requires an uninitialized project".to_owned(),
             ))
         }
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: ley_directory,
+                source,
+            })
+        }
+    }
+    let capture = CapturePolicy::for_mode(mode);
+    validate_capture(&capture)?;
+    let preview = build_capture_preview(
+        &root,
+        &capture,
+        DEFAULT_IGNORE_RULES,
+        &root.join(LEY_DIRECTORY).join(IGNORE_FILE),
+    )?;
+    Ok(InitialCapturePreview {
+        root,
+        mode,
+        capture_fingerprint: preview.capture_fingerprint,
+        plan_fingerprint: preview.plan_fingerprint,
+        files: preview.files,
+        included_bytes: preview.included_bytes,
+        skipped_oversized: preview.skipped_oversized,
+        skipped_total_limit: preview.skipped_total_limit,
+        skipped_symlinks: preview.skipped_symlinks,
+    })
+}
+
+/// Previews bounded local scope for an unregistered workspace. Existing `.ley` metadata is not
+/// trusted as identity or configuration; it is excluded from the preview and must be a real
+/// directory if present.
+pub fn preview_unregistered_workspace(
+    root: impl AsRef<Path>,
+    mode: CaptureMode,
+) -> Result<InitialCapturePreview, LeyCoreError> {
+    let root = project_import::safe_root(root.as_ref())?;
+    let ley_directory = root.join(LEY_DIRECTORY);
+    match fs::symlink_metadata(&ley_directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(LeyCoreError::UnsafeProjectLayout(ley_directory));
+        }
+        Ok(_) => {}
         Err(source) => {
             return Err(LeyCoreError::Io {
                 path: ley_directory,

@@ -238,6 +238,55 @@ fn open_authorized_root(root: &Path, expected: &str) -> Result<Dir, LeyCoreError
     }
     Ok(dir)
 }
+
+pub(crate) fn read_attached_source_nofollow(
+    root: &Path,
+    expected_root_stamp: &str,
+    relative: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, LeyCoreError> {
+    let root_dir = open_authorized_root(root, expected_root_stamp)?;
+    if relative.is_absolute() {
+        return Err(LeyCoreError::UnsafeProjectLayout(relative.to_owned()));
+    }
+    let components = relative.components().collect::<Vec<_>>();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(LeyCoreError::UnsafeProjectLayout(relative.to_owned()));
+    }
+    let mut parent = root_dir
+        .try_clone()
+        .map_err(|source| io(relative, source))?;
+    for component in &components[..components.len() - 1] {
+        let Component::Normal(name) = component else {
+            return Err(LeyCoreError::UnsafeProjectLayout(relative.to_owned()));
+        };
+        parent = parent
+            .open_dir_nofollow(name)
+            .map_err(|source| io(relative, source))?;
+    }
+    let Component::Normal(file_name) = components[components.len() - 1] else {
+        return Err(LeyCoreError::UnsafeProjectLayout(relative.to_owned()));
+    };
+    let metadata = match parent.symlink_metadata(file_name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(io(relative, source)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(LeyCoreError::UnsafeProjectLayout(relative.to_owned()));
+    }
+    if metadata.len() > limit {
+        return Ok(None);
+    }
+    let bytes =
+        crate::bounded_reader::read_scoped_file(&root_dir, relative, metadata.len(), limit)?;
+    Ok(Some(bytes))
+}
+
 fn directory_stamp(dir: &Dir, root: &Path) -> Result<String, LeyCoreError> {
     let metadata = dir.dir_metadata().map_err(|e| io(root, e))?;
     #[cfg(unix)]

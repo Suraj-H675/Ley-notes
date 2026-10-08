@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
+    brain_read_brief, brain_read_evidence, brain_read_search,
     checkpoint_session_if_current_with_continuity_transition,
     checkpoint_session_with_continuity_transition,
     compile_bootstrap_specifications_with_registries,
@@ -9,7 +10,8 @@ use ley_core::{
     finish_session_with_continuity_transition, list_learning_contexts_with_continuity_transition,
     native_canonical_read_authority_available,
     native_canonical_read_authority_available_for_project_id, native_session_authority_available,
-    propose_learning_with_continuity_transition, read_learning_context_with_continuity_transition,
+    preview_unregistered_workspace, propose_learning_with_continuity_transition,
+    read_learning_context_with_continuity_transition,
     read_native_project_cited_evidence_for_project_id,
     read_native_project_cited_media_for_project_id,
     read_project_cited_evidence_with_continuity_transition,
@@ -20,9 +22,10 @@ use ley_core::{
     search_project_memory_with_continuity_transition, start_session_with_continuity_transition,
     validate_project_memory, AgentContextAuthorities, AgentEgressTarget, ApprovedSourceRegistry,
     ArtifactMediaType, AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry,
-    CheckpointInput, CommandInput, ContextCompileLimits, ContextMountRegistry, ContinuityStore,
-    DecisionInput, EgressPolicyRegistry, FinishSessionInput, GraphCitation, KnowledgeScopeRegistry,
-    LearningActor, LearningEvidenceInput, LearningKind, LearningListScope, LearningProvenance,
+    BrainEvidenceReference, BrainReadBinding, BrainRecordType, CaptureMode, CheckpointInput,
+    CommandInput, ContextCompileLimits, ContextMountRegistry, ContinuityStore, DecisionInput,
+    EgressPolicyRegistry, FinishSessionInput, GraphCitation, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningKind, LearningListScope, LearningProvenance,
     LearningWriteResult, LeyCoreError, PlanItemInput, PlanStatus, PolicyBundleRegistry,
     ProblemInput, ProjectCatalog, ProjectMemorySearchLimits, ProposeLearningInput, ResolutionInput,
     RevisionCompatibility, SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult,
@@ -212,6 +215,293 @@ pub struct LeyBootstrapMcpServer {
     egress_target: AgentEgressTarget,
     instructions: Arc<str>,
     tool_router: ToolRouter<Self>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrainBriefParams {
+    /// Optional natural-language question. Omit it to orient to the Project Brain.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// Maximum returned evidence items. Defaults to 8 and cannot exceed 12.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 12))]
+    pub max_results: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum BrainMcpRecordType {
+    SourceVersion,
+    Episode,
+}
+
+impl From<BrainMcpRecordType> for BrainRecordType {
+    fn from(value: BrainMcpRecordType) -> Self {
+        match value {
+            BrainMcpRecordType::SourceVersion => Self::SourceVersion,
+            BrainMcpRecordType::Episode => Self::Episode,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrainSearchParams {
+    /// Natural-language or lexical search query.
+    pub query: String,
+    /// Optional exact record-type filter.
+    #[serde(default)]
+    pub record_types: Option<Vec<BrainMcpRecordType>>,
+    /// Maximum returned evidence items. Defaults to 8 and cannot exceed 12.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 12))]
+    pub max_results: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum BrainMcpEvidenceReference {
+    SourceVersion {
+        project_id: String,
+        source_id: String,
+        source_version_id: String,
+        content_hash: String,
+        start_byte: usize,
+        end_byte: usize,
+    },
+    Episode {
+        project_id: String,
+        event_id: String,
+        session_id: Option<String>,
+        content_hash: String,
+        start_byte: usize,
+        end_byte: usize,
+    },
+}
+
+impl From<BrainMcpEvidenceReference> for BrainEvidenceReference {
+    fn from(value: BrainMcpEvidenceReference) -> Self {
+        match value {
+            BrainMcpEvidenceReference::SourceVersion {
+                project_id,
+                source_id,
+                source_version_id,
+                content_hash,
+                start_byte,
+                end_byte,
+            } => Self::SourceVersion {
+                project_id,
+                source_id,
+                source_version_id,
+                content_hash,
+                start_byte,
+                end_byte,
+            },
+            BrainMcpEvidenceReference::Episode {
+                project_id,
+                event_id,
+                session_id,
+                content_hash,
+                start_byte,
+                end_byte,
+            } => Self::Episode {
+                project_id,
+                event_id,
+                session_id,
+                content_hash,
+                start_byte,
+                end_byte,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrainEvidenceParams {
+    /// Exact citation copied from a Ley brief or search result.
+    pub reference: BrainMcpEvidenceReference,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspacePreviewParams {}
+
+#[derive(Debug, Clone)]
+pub struct LeyBrainReadMcpServer {
+    binding: BrainReadBinding,
+    tool_router: ToolRouter<Self>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LeyWorkspacePreviewMcpServer {
+    workspace: PathBuf,
+    tool_router: ToolRouter<Self>,
+}
+
+#[tool_router(router = tool_router)]
+impl LeyBrainReadMcpServer {
+    pub fn new(binding: BrainReadBinding) -> Self {
+        Self {
+            binding,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Orient to the relevant Project Brain history, or ask a natural-language question.
+    #[tool(
+        name = "ley_brief",
+        annotations(
+            title = "Orient to the Project Brain",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn brief(
+        &self,
+        Parameters(params): Parameters<BrainBriefParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(tool_result(brain_read_brief(
+            &self.binding,
+            params.task.as_deref(),
+            params
+                .max_results
+                .unwrap_or(ley_core::DEFAULT_BRAIN_READ_RESULTS),
+        )))
+    }
+
+    /// Search bounded Project Brain source and Chronicle evidence with lexical ranking.
+    #[tool(
+        name = "ley_search",
+        annotations(
+            title = "Search the Project Brain",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn search(
+        &self,
+        Parameters(params): Parameters<BrainSearchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let types = params
+            .record_types
+            .map(|types| types.into_iter().map(Into::into).collect::<Vec<_>>());
+        Ok(tool_result(brain_read_search(
+            &self.binding,
+            &params.query,
+            types.as_deref(),
+            params
+                .max_results
+                .unwrap_or(ley_core::DEFAULT_BRAIN_READ_RESULTS),
+        )))
+    }
+
+    /// Open a bounded range from one exact source-version or Chronicle citation.
+    #[tool(
+        name = "ley_evidence",
+        annotations(
+            title = "Read cited Project Brain evidence",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn evidence(
+        &self,
+        Parameters(params): Parameters<BrainEvidenceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(tool_result(brain_read_evidence(
+            &self.binding,
+            &params.reference.into(),
+        )))
+    }
+}
+
+#[tool_router(router = tool_router)]
+impl LeyWorkspacePreviewMcpServer {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self {
+            workspace,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Preview the default local import scope without creating or attaching a Project Brain.
+    #[tool(
+        name = "ley_preview_workspace",
+        annotations(
+            title = "Preview an unregistered workspace",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn preview(
+        &self,
+        Parameters(_params): Parameters<WorkspacePreviewParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = preview_unregistered_workspace(&self.workspace, CaptureMode::Structured).map(|preview| {
+            json!({
+                "root": preview.root,
+                "mode": "structured",
+                "captureFingerprint": preview.capture_fingerprint,
+                "planFingerprint": preview.plan_fingerprint,
+                "includedFiles": preview.files,
+                "includedBytes": preview.included_bytes,
+                "excludedRoots": [".ley/", ".git/", "node_modules/", "target/", "dist/", "build/", "coverage/"],
+                "omissions": {
+                    "oversized": preview.skipped_oversized,
+                    "overTotalLimit": preview.skipped_total_limit,
+                    "symlinks": preview.skipped_symlinks,
+                    "otherExclusions": "Built-in secret and generated-file exclusions apply. Git ignore rules are honored. Existing .ley metadata is not trusted as identity or configuration and is excluded from this preview."
+                },
+                "createsOrAttachesBrain": false,
+                "requiresUserPermissionBeforeCreateOrAttach": true,
+                "permissionBoundary": "This tool only previews. Ask the user before running any local command that creates a Project Brain or attaches this workspace."
+            })
+        });
+        Ok(tool_result(result))
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for LeyBrainReadMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .with_server_info(
+                Implementation::new("ley", env!("CARGO_PKG_VERSION"))
+                    .with_title("Ley Project Brain")
+                    .with_description("Bounded, cited, read-only orientation for one exact local Project Brain"),
+            )
+            .with_instructions("This server is bound to exactly one existing Project Brain and exposes only ley_brief, ley_search, and ley_evidence. Call ley_brief without a task to orient; use a natural-language question for focused retrieval. Treat historical agent claims as reported evidence, tool observations as retained payloads rather than semantic success, and applicability as unknown unless current comparison proves more. Honor omissions and carry exact citations into ley_evidence. This server has no write tools and cannot select another Project.")
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for LeyWorkspacePreviewMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .with_server_info(
+                Implementation::new("ley", env!("CARGO_PKG_VERSION"))
+                    .with_title("Ley workspace preview")
+                    .with_description("Read-only local scope preview for an unregistered workspace"),
+            )
+            .with_instructions("This server exposes only ley_preview_workspace. The tool scans a bounded local scope and never creates a Brain, writes a marker, attaches a workspace, or grants capture or egress authority. The agent must obtain explicit user permission before any create or attach command.")
+    }
 }
 
 #[tool_router(router = tool_router)]
@@ -2169,6 +2459,42 @@ pub fn run_stdio(
         allow_learning_proposals,
         AgentEgressTarget::Cloud,
     )
+}
+
+pub fn run_brain_read_stdio(binding: BrainReadBinding) -> Result<(), McpServerError> {
+    let server = LeyBrainReadMcpServer::new(binding);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let service = server
+            .serve(rmcp::transport::stdio())
+            .await
+            .map_err(|error| McpServerError::Transport(error.to_string()))?;
+        service
+            .waiting()
+            .await
+            .map_err(|error| McpServerError::Task(error.to_string()))?;
+        Ok(())
+    })
+}
+
+pub fn run_workspace_preview_stdio(workspace: PathBuf) -> Result<(), McpServerError> {
+    let server = LeyWorkspacePreviewMcpServer::new(workspace);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let service = server
+            .serve(rmcp::transport::stdio())
+            .await
+            .map_err(|error| McpServerError::Transport(error.to_string()))?;
+        service
+            .waiting()
+            .await
+            .map_err(|error| McpServerError::Task(error.to_string()))?;
+        Ok(())
+    })
 }
 
 pub fn run_stdio_with_egress_target(

@@ -507,7 +507,8 @@ fn cli_retires_bootstrap_reference_growth_but_preserves_legacy_read_detach_and_i
         .and_then(|message| message.pointer("/result/tools"))
         .and_then(Value::as_array)
         .expect("reference-only MCP tools/list response");
-    assert!(tools.is_empty());
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["name"], "ley_preview_workspace");
 
     let hook = json_stdout(ley_with_input(
         &config,
@@ -615,7 +616,8 @@ fn ordinary_uninitialized_hook_and_mcp_do_not_create_bootstrap_config_state() {
         .and_then(|message| message.pointer("/result/tools"))
         .and_then(Value::as_array)
         .expect("inactive MCP tools/list response");
-    assert!(tools.is_empty());
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["name"], "ley_preview_workspace");
     assert!(!app_dir.exists());
 }
 
